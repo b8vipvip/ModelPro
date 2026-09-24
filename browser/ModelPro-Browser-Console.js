@@ -1,5 +1,5 @@
 /*
- ModelPro Browser Console Verifier v0.4.1
+ ModelPro Browser Console Verifier v0.4.2
  Paste this entire file into Chrome DevTools Console on https://chatgpt.com/
  It uses conversation-driven discovery when the home page has no visible model picker,
  validates the visible answer, and automatically downloads a JSON report.
@@ -11,7 +11,7 @@
 */
 (async () => {
   'use strict';
-  const VERSION='0.4.1-browser', MARKER='ModelPro 浏览器验证';
+  const VERSION='0.4.2-browser', MARKER='ModelPro 浏览器验证';
   const WAIT=ms=>new Promise(r=>setTimeout(r,ms));
   const now=()=>new Date().toISOString();
   const norm=s=>String(s??'').replace(/\s+/g,' ').trim();
@@ -120,7 +120,7 @@
   function pickerCandidates(){
     const selectors=[
       '[data-testid*="model"][role="button"]','button[data-testid*="model"]',
-      '[aria-label*="model" i]','[aria-label*="模型"]',
+      '[aria-label*="model" i]','[aria-label*="模型"]','[aria-label*="切换模型"]',
       'header button','main button'
     ];
     const all=[...new Set(selectors.flatMap(s=>[...document.querySelectorAll(s)]))]
@@ -130,7 +130,7 @@
       const r=el.getBoundingClientRect(),cx=r.left+r.width/2;
       const s=[textOf(el),el.getAttribute('aria-label'),el.getAttribute('data-testid')].join(' ');
       return r.top<150 && cx>innerWidth*.20 && cx<innerWidth*.80 &&
-        /model|模型|gpt|astra|sol|pro|luna|terra/i.test(s) &&
+        /model|模型|切换模型|gpt|astra|sol|pro|luna|terra/i.test(s) &&
         !/share|共享|send|发送|new chat|新聊天/i.test(s);
     });
     all.push(...topCenter.filter(x=>!all.includes(x)));
@@ -138,7 +138,7 @@
       const r=el.getBoundingClientRect();
       const s=[textOf(el),el.getAttribute('aria-label'),el.getAttribute('data-testid')].join(' ');
       return r.top < Math.min(180, innerHeight*.22) &&
-        /model|模型|gpt|chatgpt|astra|sol|pro|luna|terra/i.test(s) &&
+        /model|模型|切换模型|gpt|chatgpt|astra|sol|pro|luna|terra/i.test(s) &&
         !invalidModelLabel(s) && !/send|发送|share|共享|new chat/i.test(s);
     });
   }
@@ -203,12 +203,30 @@
     await sendPrompt(prompt);
     diagnostic('bootstrap_probe_sent','info',{urlImmediatelyAfter:location.href,composer:composerSnapshot()});
     const transition=await waitConversationTransition(beforeUrl,beforeAssist);
-    // A SPA navigation can replace the original assistant node. Re-baseline against the
-    // post-navigation conversation and bind to the latest visible assistant turn if present.
+    // If a new assistant turn already exists, bind directly to that turn. Passing beforeAssist
+    // here would require a fourth block and can wait forever after the third block already appeared.
     const afterTransitionBlocks=assistantBlocks();
-    const answerBaseline=Math.max(0,Math.min(beforeAssist,afterTransitionBlocks.length-1));
-    diagnostic('bootstrap_answer_binding','info',{beforeAssist,afterTransitionCount:afterTransitionBlocks.length,answerBaseline,transition});
-    const ans=await waitAnswer(p.expectedValue,answerBaseline,60000);
+    let ans;
+    if(afterTransitionBlocks.length>beforeAssist){
+      const target=afterTransitionBlocks[afterTransitionBlocks.length-1];
+      diagnostic('bootstrap_answer_binding','info',{beforeAssist,afterTransitionCount:afterTransitionBlocks.length,binding:'existing_new_turn',target:elementSnapshot(target),transition});
+      const deadline=Date.now()+60000; let last='',lastText='',stableSince=0;
+      while(Date.now()<deadline){
+        last=norm(textOf(target));
+        const generating=!!document.querySelector('button[data-testid="stop-button"],button[aria-label*="Stop" i],button[aria-label*="停止"]');
+        if(last===lastText&&last){if(!stableSince)stableSince=Date.now();}else{lastText=last;stableSince=Date.now();}
+        if(!generating&&last&&Date.now()-stableSince>=1200){
+          const matches=[...last.matchAll(/校验值\\s*[=＝:：]\\s*(\\d+)/g)],m=matches.at(-1);
+          ans=m?{answer:+m[1],text:last.slice(-2000),ok:+m[1]===p.expectedValue,turnStable:true}:{answer:null,text:last.slice(-2000),ok:false,missingAnswer:true,turnStable:true};
+          break;
+        }
+        await WAIT(300);
+      }
+      if(!ans)ans={answer:null,text:last.slice(-2000),ok:false,timedOut:true};
+    }else{
+      diagnostic('bootstrap_answer_binding','info',{beforeAssist,afterTransitionCount:afterTransitionBlocks.length,binding:'wait_for_new_turn',transition});
+      ans=await waitAnswer(p.expectedValue,beforeAssist,60000);
+    }
     report.bootstrap={probe:p,answer:ans.answer,answerExcerpt:ans.text,probeAnswerConfirmed:ans.ok,timedOut:ans.timedOut===true,urlAfter:location.href};
     log(ans.ok?'info':'warn','bootstrap_probe_result',report.bootstrap);
     await WAIT(500);
