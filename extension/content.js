@@ -1230,14 +1230,18 @@ document.addEventListener('pointerdown', (event) => {
     const pickerIsOpen = picker?.getAttribute?.('data-state') !== 'closed'
       && picker?.closest?.('[data-state="closed"][role="menu"]') == null;
     const alreadyVisibleRows = pickerIsOpen && alreadyVisibleAdvanced ? distinctModelRows(alreadyVisibleAdvanced) : [];
-    if (alreadyVisibleRows.length) {
-      pickerTopologyProbe('third-layer-reused', {
+    // The slider's advanced view is still picker A. v0.1.20 incorrectly promoted
+    // its two inline rows (GPT-5.6 Sol + GPT-5.5) to picker B merely because the
+    // advanced view was mounted. Picker B is ONLY the catalog opened by activating
+    // the unique accessible "选择模型 / Select model" opener.
+    if (alreadyVisibleRows.length && !initialOpener) {
+      pickerTopologyProbe('picker-mode-a-advanced-inline-list', {
         pageContext,
-        opener: compactElementProbe(initialOpener),
+        pickerMode: 'A',
         submenu: compactElementProbe(alreadyVisibleAdvanced),
         modelRows: alreadyVisibleRows.map((row) => ({ element: compactElementProbe(row), descriptor: rowModelDescriptor(row) })),
       });
-      return { trigger, picker, opener: initialOpener, submenu: alreadyVisibleAdvanced, rows: alreadyVisibleRows, pageContext, pickerMode: 'B' };
+      return { trigger, picker, opener: null, submenu: alreadyVisibleAdvanced, rows: alreadyVisibleRows, pageContext, pickerMode: 'A' };
     }
 
     if (!initialOpener) {

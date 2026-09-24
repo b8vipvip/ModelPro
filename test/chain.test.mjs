@@ -87,7 +87,7 @@ test('v0.1.7 standalone active paths omit Native Host residue',async()=>{
 
 
 
-test('v0.1.20 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
+test('v0.1.21 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
  const [background,content]=await Promise.all([r('extension/background.js'),r('extension/content.js')]);
  assert.match(background,/probeText: prompt/);
  assert.doesNotMatch(background,/probeText: \`\\\$\\\{marker\\\}/);
@@ -100,7 +100,7 @@ test('v0.1.20 sends natural prompt text without verification prefixes and reacqu
 
 
 
-test('v0.1.20 never sends or reload-recovers an extra Sol unlock turn',async()=>{
+test('v0.1.21 never sends or reload-recovers an extra Sol unlock turn',async()=>{
  const background=await r('extension/background.js');
  assert.doesNotMatch(background,/verification_sol_picker_b_unlock_started/);
  assert.doesNotMatch(background,/GPTWork GPT-5\.6 Sol 能力解锁验证/);
@@ -109,7 +109,7 @@ test('v0.1.20 never sends or reload-recovers an extra Sol unlock turn',async()=>
 });
 
 
-test('v0.1.20 has one final model-row activation authority without hit-test retry layers',async()=>{
+test('v0.1.21 has one final model-row activation authority without hit-test retry layers',async()=>{
  const content=await r('extension/content.js');
  const start=content.indexOf('async function selectModelForVerification');
  const end=content.indexOf('async function chooseExact',start);
@@ -122,7 +122,7 @@ test('v0.1.20 has one final model-row activation authority without hit-test retr
 });
 
 
-test('v0.1.20 follows GPTWork runtime Work transition without a nonexistent page Work control',async()=>{
+test('v0.1.21 follows GPTWork runtime Work transition without a nonexistent page Work control',async()=>{
  const background=await r('extension/background.js');
  assert.match(background,/runtime_work_enabled_catalog_observed/);
  assert.match(background,/source: 'verification_runtime_default'/);
@@ -131,7 +131,7 @@ test('v0.1.20 follows GPTWork runtime Work transition without a nonexistent page
  assert.doesNotMatch(background,/sendTabMessage\(tabId, \{ type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' \}\)/);
 });
 
-test('v0.1.20 manual verification owns a clean diagnostic session and publishes final Work state',async()=>{
+test('v0.1.21 manual verification owns a clean diagnostic session and publishes final Work state',async()=>{
  const background=await r('extension/background.js');
  const auto=background.slice(background.indexOf('async function autoVerify('),background.indexOf('function runtimeLogNativeSyncEnabled'));
  assert.match(auto,/clearRuntimeLogs\(\)/);
@@ -140,11 +140,23 @@ test('v0.1.20 manual verification owns a clean diagnostic session and publishes 
 });
 
 
-test('v0.1.20 packaged prompt bank remains intact without page Work-control dependency',async()=>{
+test('v0.1.21 packaged prompt bank remains intact without page Work-control dependency',async()=>{
  const [background,bankText]=await Promise.all([r('extension/background.js'),r('extension/prompt-bank.json')]);
  const bank=JSON.parse(bankText);
  assert.equal(bank.prompts.length,100);
  assert.match(background,/chrome\.runtime\.getURL\('prompt-bank\.json'\)/);
  assert.match(background,/crypto\.getRandomValues/);
  assert.doesNotMatch(background,/GPTLOCK_VERIFY_ENTER_WORK_MODE/);
+});
+
+
+test('v0.1.21 distinguishes inline A rows from the real Select-model B catalog',async()=>{
+ const content=await r('extension/content.js');
+ assert.match(content,/picker-mode-a-advanced-inline-list/);
+ assert.match(content,/alreadyVisibleRows\.length && !initialOpener/);
+ assert.doesNotMatch(content,/pickerTopologyProbe\('third-layer-reused'/);
+ const open=content.slice(content.indexOf('async function openModernModelMenu'),content.indexOf('function rowModelDescriptor'));
+ assert.match(open,/const opener = modelSubmenuOpener\(picker\)/);
+ assert.match(open,/modelPickerPointer\(activeOpener, 'click', 'model-picker-submenu'\)/);
+ assert.match(open,/pickerMode: 'B'/);
 });
