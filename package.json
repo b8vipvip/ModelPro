@@ -1,13 +1,9 @@
 {
-  "name": "@b8vipvip/modelpro",
+  "name": "modelpro",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
-  "private": false,
   "scripts": {
-    "test": "node --test",
-    "test:windows-basic": "node ./scripts/windows-basic-test.mjs"
-  },
-  "exports": {
-    "./model-verification": "./src/model-verification.js"
+    "test": "node --test test/*.test.mjs"
   }
 }

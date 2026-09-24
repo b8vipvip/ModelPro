@@ -1,34 +1,39 @@
 # ModelPro
 
-ModelPro is the canonical, consumer-independent model-verification module used by GPTWork and other projects.
+ModelPro is the standalone extraction of the **complete GPTWork model-verification chain**.
 
-## Contract
+This repository was re-baselined from GPTWork `main` commit
+`d491987b4832e2f3da614a94582b7b06fd811bb3`. The earlier partial extraction and
+browser-console reimplementation were discarded because GPTWork already had working
+model-picker discovery and an end-to-end verification flow.
 
-ModelPro owns the deterministic verification probe, catalog convergence/ordering, verification outcome summarization, and portable verification-history record shape. Consumer projects provide adapters for browser UI selection, request interception, response evidence, logging, persistence, and product-specific mode transitions.
+## Canonical baseline
 
-The verification authority is deliberately evidence-based: a consumer should mark a model verified only when the intended forwarded request model and the terminal backend-served response model are both confirmed for the same turn.
+The files under `src/gptwork-chain/` are byte-for-byte source snapshots from the
+working GPTWork baseline. They intentionally preserve both ChatGPT picker paths,
+Chat/Work verification transitions, dynamic catalog rediscovery, per-model
+verification transactions, request interception, requestId correlation, and
+request/response model evidence.
 
-## Consumer workflow
+The known unresolved problem is **response model evidence disagreeing with the
+selected/request model**. ModelPro development should debug that evidence boundary
+without replacing the already-working picker/discovery chain.
 
-1. Fix and test model-verification behavior in this repository first.
-2. Publish/merge the ModelPro change.
-3. Import the exact ModelPro source into each consumer (for GPTWork: `extension/vendor/modelpro/model-verification.js`).
-4. Keep `MODELPRO_SOURCE.json` beside the vendored file so the source repository/ref is explicit.
-5. Consumer-specific adapters stay in the consumer; reusable verification policy stays here.
+## Source map
 
-## API
+- `background.js` — verification orchestration, transactions, catalog convergence,
+  request/response verdicts and history.
+- `content.js` — both picker implementations, model selection, Chat/Work transition,
+  visible probe send and terminal-turn handling.
+- `network-monitor.js` — CDP/Fetch/Network observation and requestId lifecycle.
+- `network-evidence.js` — request rewrite/extraction and response evidence parsing.
+- `page-model-evidence.js` + `astra-model-evidence.js` — page evidence adapters.
+- `policy.js` — canonical model/reasoning normalization.
+- `tab-feature-runtime.js` — verification Work-mode runtime transition.
+- `model-catalog.js` — trusted model catalog persistence.
 
-`src/model-verification.js` exports:
+## Rule
 
-- `buildVerificationProbe(marker, ordinal, total)`
-- `catalogIdentity(item)`
-- `verificationChronology(item, normalizeModel)`
-- `createVerificationCatalog(...)`
-- `summarizeVerificationOutcome(progress)`
-- `createModelVerificationHistoryRecord(...)`
-
-ModelPro has no Chrome-extension or GPTWork runtime dependency.
-
-## Windows 10 local verification
-
-For a one-click local smoke/basic test with diagnostic logs, download the repository and run `Run-ModelPro-Basic-Test.cmd`. See `WINDOWS-LOCAL-TEST.md`. Upload the generated `logs/ModelPro-*/` folder when diagnosing a failure.
+Do not re-discover ChatGPT selectors from scratch in ModelPro. Changes must begin from
+this extracted GPTWork baseline. Once the standalone chain is proven, consumers can
+import the exact ModelPro revision.
