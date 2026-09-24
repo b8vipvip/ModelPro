@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "ModelPro",
+  "version": "0.1.0",
+  "description": "Standalone GPTWork model-verification chain diagnostic extension.",
+  "minimum_chrome_version": "110",
+  "permissions": ["alarms","debugger","downloads","storage","tabs","unlimitedStorage"],
+  "host_permissions": ["https://chatgpt.com/*"],
+  "background": {"service_worker":"background.js","type":"module"},
+  "content_scripts": [{
+    "matches":["https://chatgpt.com/*"],
+    "js":["page-model-evidence.js","astra-model-evidence.js","content.js","model-catalog.js"],
+    "run_at":"document_idle"
+  }],
+  "action":{"default_title":"ModelPro","default_popup":"popup.html"}
+}

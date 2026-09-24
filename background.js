@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.5.139';
+const RUNTIME_CODE_VERSION = 'ModelPro-0.1.0';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -2737,7 +2737,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const tabId = await chatGptTabId(Number.isInteger(message.tabId) ? message.tabId : null);
         if (tabId === null) throw new Error('No ChatGPT tab / 没有打开的 ChatGPT 标签页');
         const state = tabStates.get(tabId);
-        if (!state || !accountAllowsState(state)) throw new Error('当前账号没有有效权益');
+        if (!state) throw new Error('ModelPro 尚未初始化当前 ChatGPT 标签页');
         return autoVerify(tabId);
       }
       case 'GPTLOCK_SEND_BLOCKED': {

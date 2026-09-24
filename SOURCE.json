@@ -1,9 +1,7 @@
 {
   "sourceRepository": "b8vipvip/GPTWork",
-  "sourceBranch": "main",
   "sourceCommit": "d491987b4832e2f3da614a94582b7b06fd811bb3",
-  "extractedAt": "2026-09-24",
   "scope": "complete-model-verification-chain",
-  "knownIssue": "response-model-evidence-mismatch",
-  "note": "Do not replace the working GPTWork picker/discovery chain with fresh DOM guessing."
+  "runtime": "Chrome MV3 unpacked extension",
+  "knownIssue": "response-model-evidence-mismatch"
 }
