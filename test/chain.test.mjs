@@ -24,3 +24,13 @@ test('manifest and runtime code versions stay aligned',async()=>{
   assert.ok(match,'background runtime version marker missing');
   assert.equal(match[1],manifest.version);
 });
+
+
+test('popup version and diagnostic filename come from manifest',async()=>{
+  const [popupHtml,popupJs,manifestText,packageText]=await Promise.all([r('extension/popup.html'),r('extension/popup.js'),r('extension/manifest.json'),r('package.json')]);
+  const manifest=JSON.parse(manifestText);const pkg=JSON.parse(packageText);
+  assert.doesNotMatch(popupHtml,/ModelPro 0\.1\.0/);
+  assert.match(popupJs,/chrome\.runtime\.getManifest\(\)\.version/);
+  assert.match(popupJs,/ModelPro-v/);
+  assert.equal(pkg.version,manifest.version);
+});
