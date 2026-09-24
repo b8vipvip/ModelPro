@@ -1,5 +1,5 @@
 /*
- ModelPro Browser Console Verifier v0.3.0
+ ModelPro Browser Console Verifier v0.3.1
  Paste this entire file into Chrome DevTools Console on https://chatgpt.com/
  It discovers visible model choices, selects each model, sends deterministic probes,
  validates the visible answer, and automatically downloads a JSON report.
@@ -11,7 +11,7 @@
 */
 (async () => {
   'use strict';
-  const VERSION='0.3.0-browser', MARKER='ModelPro 浏览器验证';
+  const VERSION='0.3.1-browser', MARKER='ModelPro 浏览器验证';
   const WAIT=ms=>new Promise(r=>setTimeout(r,ms));
   const now=()=>new Date().toISOString();
   const norm=s=>String(s??'').replace(/\s+/g,' ').trim();
@@ -85,6 +85,9 @@
     }
     return{answer:null,text:last.slice(-2000),ok:false,timedOut:true};
   }
+  function inSidebar(el){
+    return !!el?.closest?.('nav,aside,[data-testid*="sidebar" i],[class*="sidebar" i]');
+  }
   function invalidModelLabel(label){
     return /打开[“"].*对话|对话选项|置顶|GPTWork|GPTAuto|修复|发布收口|conversation options|pin\b/i.test(label);
   }
@@ -94,7 +97,8 @@
       '[aria-label*="model" i]','[aria-label*="模型"]',
       'header button','main button'
     ];
-    const all=[...new Set(selectors.flatMap(s=>[...document.querySelectorAll(s)]))].filter(visible);
+    const all=[...new Set(selectors.flatMap(s=>[...document.querySelectorAll(s)]))]
+      .filter(visible).filter(el=>!inSidebar(el));
     return all.filter(el=>{
       const r=el.getBoundingClientRect();
       const s=[textOf(el),el.getAttribute('aria-label'),el.getAttribute('data-testid')].join(' ');
@@ -106,7 +110,7 @@
   async function openPicker(){
     const before=new Set([...document.querySelectorAll('[role="menu"],[role="listbox"],[role="dialog"]')].filter(visible));
     const c=pickerCandidates();
-    if(!c.length)throw new Error('找不到顶部模型选择器按钮');
+    if(!c.length)throw new Error('找不到顶部模型选择器按钮（已明确排除左侧聊天栏）');
     const p=c.sort((a,b)=>{
       const ad=(a.getAttribute('data-testid')||'').toLowerCase(),bd=(b.getAttribute('data-testid')||'').toLowerCase();
       return (bd.includes('model')?2:0)-(ad.includes('model')?2:0);
@@ -115,11 +119,14 @@
     const overlays=[...document.querySelectorAll('[role="menu"],[role="listbox"],[role="dialog"]')].filter(visible);
     const root=overlays.find(x=>!before.has(x)) || overlays.at(-1);
     if(!root)throw new Error('点击模型选择器后没有发现模型菜单/列表');
+    if(inSidebar(root))throw new Error('安全停止：检测到左侧聊天栏菜单，拒绝继续点击');
     return {button:p,root};
   }
   function menuModelRows(root){
     if(!root||!visible(root))return[];
-    const items=[...root.querySelectorAll('[role="menuitem"],[role="option"],button,[role="button"]')].filter(visible),rows=[];
+    if(inSidebar(root))throw new Error('catalog_discovery_invalid: 模型菜单根节点位于左侧聊天栏');
+    const items=[...root.querySelectorAll('[role="menuitem"],[role="option"],button,[role="button"]')]
+      .filter(visible).filter(el=>!inSidebar(el)),rows=[];
     for(const el of items){
       const label=textOf(el);
       if(!label||label.length>120||invalidModelLabel(label))continue;
@@ -141,7 +148,9 @@
   }
   try{
     if(location.hostname!=='chatgpt.com')throw new Error('请在 https://chatgpt.com/ 页面运行');
-    window.__MODELPRO_STOP__=false; makePanel(); log('info','verification_started',{version:VERSION});
+    window.__MODELPRO_STOP__=false; makePanel();
+    console.log('%cModelPro '+VERSION,'font-size:18px;font-weight:bold;color:#16a34a');
+    log('info','verification_started',{version:VERSION,safety:'sidebar-excluded'});
     const models=await discover(); if(!models.length)throw new Error('未发现模型');
     for(let i=0;i<models.length;i++){
       if(window.__MODELPRO_STOP__)break;
