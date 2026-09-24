@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.34';
+const RUNTIME_CODE_VERSION = '0.1.35';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -1890,6 +1890,19 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
         }
       }
       if (selection.selectionAttempted !== true) throw new Error('Model selection control was not activated');
+
+      // Picker B updates ChatGPT's Work model state asynchronously. v0.1.34 proved
+      // that sending in the same task can leave the native conversation body on the
+      // previous GPT-5.6 Sol model even though the B row is already checked. Give the
+      // page state a bounded settle window before arming/sending the verification turn.
+      if (item.pickerMode === 'B') {
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        logRuntime('info', 'verification', 'picker_b_selection_settled_before_probe', {
+          tabId,
+          model: item.model,
+          settleMs: 1200,
+        });
+      }
 
       const reattached = await networkMonitor.attach(tabId);
       if (!reattached) throw new Error(state.monitor?.error || 'Request lock monitor did not reattach after model selection');
