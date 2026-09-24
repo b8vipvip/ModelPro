@@ -28,3 +28,7 @@ The verification authority is deliberately evidence-based: a consumer should mar
 - `createModelVerificationHistoryRecord(...)`
 
 ModelPro has no Chrome-extension or GPTWork runtime dependency.
+
+## Windows 10 local verification
+
+For a one-click local smoke/basic test with diagnostic logs, download the repository and run `Run-ModelPro-Basic-Test.cmd`. See `WINDOWS-LOCAL-TEST.md`. Upload the generated `logs/ModelPro-*/` folder when diagnosing a failure.
