@@ -1,5 +1,5 @@
 /*
- ModelPro Browser Console Verifier v0.3.7
+ ModelPro Browser Console Verifier v0.3.8
  Paste this entire file into Chrome DevTools Console on https://chatgpt.com/
  It discovers visible model choices, selects each model, sends deterministic probes,
  validates the visible answer, and automatically downloads a JSON report.
@@ -11,7 +11,7 @@
 */
 (async () => {
   'use strict';
-  const VERSION='0.3.7-browser', MARKER='ModelPro 浏览器验证';
+  const VERSION='0.3.8-browser', MARKER='ModelPro 浏览器验证';
   const WAIT=ms=>new Promise(r=>setTimeout(r,ms));
   const now=()=>new Date().toISOString();
   const norm=s=>String(s??'').replace(/\s+/g,' ').trim();
@@ -98,6 +98,11 @@
   function invalidModelLabel(label){
     return /打开[“"].*对话|对话选项|置顶|GPTWork|GPTAuto|修复|发布收口|conversation options|pin\b/i.test(label);
   }
+  function modeControls(){
+    return [...document.querySelectorAll('button[role="radio"],[role="radio"]')]
+      .filter(visible).filter(el=>!inSidebar(el))
+      .filter(el=>/^(聊天|chat|工作|work)$/i.test(textOf(el)));
+  }
   function pickerCandidates(){
     const selectors=[
       '[data-testid*="model"][role="button"]','button[data-testid*="model"]',
@@ -106,38 +111,33 @@
     ];
     const all=[...new Set(selectors.flatMap(s=>[...document.querySelectorAll(s)]))]
       .filter(visible).filter(el=>!inSidebar(el));
-    // Current ChatGPT home can render the model/mode control as text buttons without
-    // model-related attributes. Add only top-center controls, never sidebar controls.
     const topCenter=[...document.querySelectorAll('button,[role="button"]')].filter(visible).filter(el=>{
       if(inSidebar(el))return false;
       const r=el.getBoundingClientRect(),cx=r.left+r.width/2;
       const s=[textOf(el),el.getAttribute('aria-label'),el.getAttribute('data-testid')].join(' ');
       return r.top<150 && cx>innerWidth*.20 && cx<innerWidth*.80 &&
-        /chat|聊天|work|工作|model|模型|gpt|astra|sol|pro|luna|terra/i.test(s) &&
+        /model|模型|gpt|astra|sol|pro|luna|terra/i.test(s) &&
         !/share|共享|send|发送|new chat|新聊天/i.test(s);
     });
     all.push(...topCenter.filter(x=>!all.includes(x)));
-    // ChatGPT's current home UI exposes Chat/Work as role=radio buttons.
-    // Treat the Chat radio as the safe entry point for model discovery.
-    const modeRadios=[...document.querySelectorAll('button[role="radio"],[role="radio"]')]
-      .filter(visible).filter(el=>!inSidebar(el)).filter(el=>/^(聊天|chat)$/i.test(textOf(el)));
-    all.push(...modeRadios.filter(x=>!all.includes(x)));
     return all.filter(el=>{
       const r=el.getBoundingClientRect();
-      const text=textOf(el);
-      const role=el.getAttribute('role')||'';
-      const s=[text,el.getAttribute('aria-label'),el.getAttribute('data-testid')].join(' ');
-      const explicitChatRadio=role==='radio' && /^(聊天|chat)$/i.test(text);
+      const s=[textOf(el),el.getAttribute('aria-label'),el.getAttribute('data-testid')].join(' ');
       return r.top < Math.min(180, innerHeight*.22) &&
-        (explicitChatRadio || /model|模型|gpt|chatgpt|astra|sol|pro|luna|terra/i.test(s)) &&
+        /model|模型|gpt|chatgpt|astra|sol|pro|luna|terra/i.test(s) &&
         !invalidModelLabel(s) && !/send|发送|share|共享|new chat/i.test(s);
     });
   }
   async function openPicker(){
-    const before=new Set([...document.querySelectorAll('[role="menu"],[role="listbox"],[role="dialog"]')].filter(visible));
     const c=pickerCandidates();
-    diagnostic('picker_candidates',c.length?'info':'error',{count:c.length,candidates:c.slice(0,30).map(elementSnapshot)});
-    if(!c.length)throw new Error('找不到顶部模型/模式选择器按钮（已明确排除左侧聊天栏）');
+    diagnostic('picker_candidates',c.length?'info':'warn',{count:c.length,candidates:c.slice(0,30).map(elementSnapshot)});
+    if(!c.length){
+      const modes=modeControls();
+      diagnostic('mode_controls','info',{count:modes.length,controls:modes.map(elementSnapshot),
+        note:'Chat/Work are mode toggles, not model-picker buttons; no click attempted'});
+      throw new Error('当前页面没有可见的模型选择器；“聊天/工作”是模式切换控件，不是模型菜单');
+    }
+    const before=new Set([...document.querySelectorAll('[role="menu"],[role="listbox"],[role="dialog"]')].filter(visible));
     const p=c.sort((a,b)=>{
       const ad=(a.getAttribute('data-testid')||'').toLowerCase(),bd=(b.getAttribute('data-testid')||'').toLowerCase();
       return (bd.includes('model')?2:0)-(ad.includes('model')?2:0);
@@ -146,13 +146,12 @@
     const overlays=[...document.querySelectorAll('[role="menu"],[role="listbox"],[role="dialog"]')].filter(visible);
     let root=overlays.find(x=>!before.has(x)) || overlays.at(-1);
     if(!root){
-      // Some current ChatGPT controls expand into a nearby popover without ARIA menu/listbox.
       const popupCandidates=[...document.querySelectorAll('[data-radix-popper-content-wrapper],[data-radix-menu-content],[data-state="open"]')]
         .filter(visible).filter(el=>!inSidebar(el)).filter(el=>el.querySelector('button,[role="menuitem"],[role="option"],[role="radio"]'));
       root=popupCandidates.at(-1)||null;
     }
     diagnostic('picker_opened',root?'info':'error',{button:elementSnapshot(p),root:elementSnapshot(root)});
-    if(!root)throw new Error('点击顶部“聊天”后没有发现模型菜单/弹层');
+    if(!root)throw new Error('点击模型选择器后没有发现模型菜单/弹层');
     if(inSidebar(root))throw new Error('安全停止：检测到左侧聊天栏菜单，拒绝继续点击');
     return {button:p,root};
   }
