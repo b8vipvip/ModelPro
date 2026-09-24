@@ -1,5 +1,5 @@
 /*
- ModelPro Browser Console Verifier v0.2.0
+ ModelPro Browser Console Verifier v0.3.0
  Paste this entire file into Chrome DevTools Console on https://chatgpt.com/
  It discovers visible model choices, selects each model, sends deterministic probes,
  validates the visible answer, and automatically downloads a JSON report.
@@ -11,7 +11,7 @@
 */
 (async () => {
   'use strict';
-  const VERSION='0.2.0-browser', MARKER='ModelPro 浏览器验证';
+  const VERSION='0.3.0-browser', MARKER='ModelPro 浏览器验证';
   const WAIT=ms=>new Promise(r=>setTimeout(r,ms));
   const now=()=>new Date().toISOString();
   const norm=s=>String(s??'').replace(/\s+/g,' ').trim();
@@ -64,19 +64,75 @@
   async function sendPrompt(text){ const c=findComposer(); if(!c)throw new Error('找不到 ChatGPT 输入框'); setComposer(c,text); await WAIT(300); const b=findSend(); if(b)click(b); else c.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true,cancelable:true})); log('info','probe_sent',{text}); }
   function assistantBlocks(){ const a=[...document.querySelectorAll('[data-message-author-role="assistant"]')].filter(visible); if(a.length)return a; return [...document.querySelectorAll('article[data-testid^="conversation-turn"]')].filter(visible); }
   async function waitAnswer(expected,beforeCount,timeout=120000){
-    const deadline=Date.now()+timeout; let last='';
-    while(Date.now()<deadline){ if(window.__MODELPRO_STOP__)throw new Error('stopped'); const blocks=assistantBlocks(),fresh=blocks.slice(Math.max(0,beforeCount-1)); last=norm(fresh.map(textOf).join('\n')); const matches=[...last.matchAll(/校验值\s*[=＝:：]\s*(\d+)/g)]; const m=matches.at(-1); if(m)return{answer:+m[1],text:last.slice(-2000),ok:+m[1]===expected}; await WAIT(500); }
+    const deadline=Date.now()+timeout; let last='',stableSince=0,lastText='',target=null;
+    while(Date.now()<deadline){
+      if(window.__MODELPRO_STOP__)throw new Error('stopped');
+      const blocks=assistantBlocks();
+      if(!target && blocks.length>beforeCount) target=blocks[blocks.length-1];
+      if(target && target.isConnected){
+        last=norm(textOf(target));
+        const generating=!!document.querySelector('button[data-testid="stop-button"],button[aria-label*="Stop" i],button[aria-label*="停止"]');
+        if(last===lastText && last) { if(!stableSince)stableSince=Date.now(); }
+        else { lastText=last; stableSince=Date.now(); }
+        const stable=Date.now()-stableSince>=1200;
+        if(!generating && stable){
+          const matches=[...last.matchAll(/校验值\s*[=＝:：]\s*(\d+)/g)],m=matches.at(-1);
+          if(m)return{answer:+m[1],text:last.slice(-2000),ok:+m[1]===expected,turnStable:true};
+          return{answer:null,text:last.slice(-2000),ok:false,missingAnswer:true,turnStable:true};
+        }
+      }
+      await WAIT(300);
+    }
     return{answer:null,text:last.slice(-2000),ok:false,timedOut:true};
   }
-  function pickerCandidates(){ return [...document.querySelectorAll('button,[role="button"]')].filter(visible).filter(el=>{ const s=[textOf(el),el.getAttribute('aria-label'),el.getAttribute('data-testid')].join(' '); return /model|模型|gpt|chatgpt/i.test(s)&&!/send|发送/i.test(s); }); }
-  async function openPicker(){ const c=pickerCandidates(); const p=c.find(el=>/model|模型|gpt/i.test([el.getAttribute('data-testid'),el.getAttribute('aria-label'),textOf(el)].join(' '))); if(!p)throw new Error('找不到模型选择器按钮'); click(p); await WAIT(800); return p; }
-  function menuModelRows(){
-    const items=[...document.querySelectorAll('[role="menuitem"],[role="option"],button')].filter(visible),rows=[];
-    for(const el of items){ const label=textOf(el); if(!label||label.length>180)continue; if(!/(GPT|ChatGPT|Astra|Sol|Pro|Luna|Terra|o\d)/i.test(label))continue; if(/upgrade|plan|设置|settings|new chat|temporary|send|发送/i.test(label))continue; rows.push({label,el}); }
-    const seen=new Set(); return rows.filter(r=>{const k=r.label.toLowerCase();if(seen.has(k))return false;seen.add(k);return true});
+  function invalidModelLabel(label){
+    return /打开[“"].*对话|对话选项|置顶|GPTWork|GPTAuto|修复|发布收口|conversation options|pin\b/i.test(label);
   }
-  async function discover(){ await openPicker(); const rows=menuModelRows(); if(!rows.length){document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));throw new Error('模型菜单已打开，但未发现可识别模型项');} report.discoveredModels=rows.map(r=>({label:r.label})).sort(compare); log('info','models_discovered',{models:report.discoveredModels.map(x=>x.label)}); document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); await WAIT(300); return report.discoveredModels; }
-  async function selectModel(label){ await openPicker(); const rows=menuModelRows(),low=label.toLowerCase(); const row=rows.find(r=>r.label===label)||rows.find(r=>r.label.toLowerCase().includes(low)||low.includes(r.label.toLowerCase())); if(!row)throw new Error('模型菜单中找不到: '+label); click(row.el); await WAIT(900); log('info','model_selected',{label}); }
+  function pickerCandidates(){
+    const selectors=[
+      '[data-testid*="model"][role="button"]','button[data-testid*="model"]',
+      '[aria-label*="model" i]','[aria-label*="模型"]',
+      'header button','main button'
+    ];
+    const all=[...new Set(selectors.flatMap(s=>[...document.querySelectorAll(s)]))].filter(visible);
+    return all.filter(el=>{
+      const r=el.getBoundingClientRect();
+      const s=[textOf(el),el.getAttribute('aria-label'),el.getAttribute('data-testid')].join(' ');
+      return r.top < Math.min(180, innerHeight*.22) &&
+        /model|模型|gpt|chatgpt|astra|sol|pro|luna|terra/i.test(s) &&
+        !invalidModelLabel(s) && !/send|发送|share|共享|new chat/i.test(s);
+    });
+  }
+  async function openPicker(){
+    const before=new Set([...document.querySelectorAll('[role="menu"],[role="listbox"],[role="dialog"]')].filter(visible));
+    const c=pickerCandidates();
+    if(!c.length)throw new Error('找不到顶部模型选择器按钮');
+    const p=c.sort((a,b)=>{
+      const ad=(a.getAttribute('data-testid')||'').toLowerCase(),bd=(b.getAttribute('data-testid')||'').toLowerCase();
+      return (bd.includes('model')?2:0)-(ad.includes('model')?2:0);
+    })[0];
+    click(p); await WAIT(800);
+    const overlays=[...document.querySelectorAll('[role="menu"],[role="listbox"],[role="dialog"]')].filter(visible);
+    const root=overlays.find(x=>!before.has(x)) || overlays.at(-1);
+    if(!root)throw new Error('点击模型选择器后没有发现模型菜单/列表');
+    return {button:p,root};
+  }
+  function menuModelRows(root){
+    if(!root||!visible(root))return[];
+    const items=[...root.querySelectorAll('[role="menuitem"],[role="option"],button,[role="button"]')].filter(visible),rows=[];
+    for(const el of items){
+      const label=textOf(el);
+      if(!label||label.length>120||invalidModelLabel(label))continue;
+      if(!/(GPT|ChatGPT|Astra|Sol|Pro|Luna|Terra|o\d)/i.test(label))continue;
+      if(/upgrade|plan|设置|settings|new chat|temporary|send|发送/i.test(label))continue;
+      rows.push({label,el});
+    }
+    const seen=new Set();
+    return rows.filter(r=>{const k=r.label.toLowerCase();if(seen.has(k))return false;seen.add(k);return true});
+  }
+  async function discover(){ const opened=await openPicker(); const rows=menuModelRows(opened.root); if(!rows.length){document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));throw new Error('模型菜单已打开，但未发现可识别模型项');} report.discoveredModels=rows.map(r=>({label:r.label})).sort(compare);
+    if(report.discoveredModels.some(x=>invalidModelLabel(x.label))) throw new Error('catalog_discovery_invalid: 发现会话导航项，已停止以防误测试'); log('info','models_discovered',{models:report.discoveredModels.map(x=>x.label)}); document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); await WAIT(300); return report.discoveredModels; }
+  async function selectModel(label){ const opened=await openPicker(); const rows=menuModelRows(opened.root),low=label.toLowerCase(); const row=rows.find(r=>r.label===label)||rows.find(r=>r.label.toLowerCase().includes(low)||low.includes(r.label.toLowerCase())); if(!row)throw new Error('模型菜单中找不到: '+label); click(row.el); await WAIT(900); log('info','model_selected',{label}); }
   function download(obj){ const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'}); const a=document.createElement('a'),stamp=new Date().toISOString().replace(/[:.]/g,'-'); a.href=URL.createObjectURL(blob); a.download='ModelPro-Browser-Report-'+stamp+'.json'; document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),3000); }
   function finalize(reason='completed'){
     if(finalized)return; finalized=true; report.completedAt=now(); report.finishReason=reason;
