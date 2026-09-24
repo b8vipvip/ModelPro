@@ -34,3 +34,10 @@ test('popup version and diagnostic filename come from manifest',async()=>{
   assert.match(popupJs,/ModelPro-v/);
   assert.equal(pkg.version,manifest.version);
 });
+
+
+test('standalone runtime does not reconnect when native messaging API is unavailable',async()=>{
+  const background=await r('extension/background.js');
+  assert.match(background,/typeof chrome\.runtime\.connectNative !== 'function'/);
+  assert.match(background,/Native messaging is not part of standalone ModelPro/);
+});

@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.2';
+const RUNTIME_CODE_VERSION = '0.1.3';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -555,6 +555,7 @@ async function writeNativeStatus(patch) {
 }
 
 async function scheduleReconnect() {
+  if (typeof chrome.runtime.connectNative !== 'function') return false;
   if (!await masterStorageEnabled()) return false;
   chrome.alarms.create(RECONNECT_ALARM, { delayInMinutes: 0.5 });
   return true;
@@ -603,6 +604,9 @@ async function stopBackgroundRuntime(reason = 'master_disabled') {
 }
 
 function connectNative() {
+  if (typeof chrome.runtime.connectNative !== 'function') {
+    throw Object.assign(new Error('Native messaging is not part of standalone ModelPro'), { code: 'NATIVE_UNAVAILABLE' });
+  }
   if (!masterRuntimeEnabled()) {
     throw Object.assign(new Error('GPTWork master disabled'), { code: 'MASTER_DISABLED' });
   }
