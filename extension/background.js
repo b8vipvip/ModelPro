@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.21';
+const RUNTIME_CODE_VERSION = '0.1.22';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -1978,34 +1978,82 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
       }
     }
 
-    // GPTWork's mature chain treats Work as a tab-scoped runtime feature, not a
-    // top-page ChatGPT button. v0.1.18 proved the current page exposes picker B
-    // while no such top-page Work control exists. Do not invent a second UI
-    // authority after Sol; preserve the runtime transition established after 5.5
-    // and let the owned picker/catalog be the discovery authority.
+    // Picker B is unlocked by the same product path used during normal GPTWork use:
+    // after A has verified Sol and the tab-scoped Work policy is armed, send ONE
+    // ordinary natural turn outside verificationTransactions. That request therefore
+    // belongs exclusively to normal-policy (not the verification authority). Only the
+    // real B catalog is allowed to confirm the A -> Work/B transition.
     if (item.model === 'gpt-5.6-sol' && workActivationPending) {
-      const runtimeCatalog = await discoverAccountCatalog(tabId);
-      progress.discoveryPasses += 1;
-      const addedFromRuntime = mergeCatalog(runtimeCatalog, 'work-runtime-catalog');
-      progress.workDiscovery = {
-        attempted: true,
-        entered: true,
-        reason: 'runtime_work_enabled_catalog_observed',
-        runtimeEnabled: true,
-        source: 'verification_runtime_default',
-        pickerMode: runtimeCatalog?.pickerMode ?? null,
-        added: addedFromRuntime,
-      };
-      logRuntime('info', 'verification', 'verification_work_mode_transition', {
-        tabId, phase: 'post_gpt_5_6_sol', entered: true,
-        source: 'verification_runtime_default',
-        reason: progress.workDiscovery.reason,
-        pickerMode: runtimeCatalog?.pickerMode ?? null,
-        added: addedFromRuntime,
-      });
-      workActivationPending = false;
-      if (addedFromRuntime) stablePasses = 0;
-      await broadcastTabState(tabId);
+      const completedSol = progress.results.at(-1);
+      if (completedSol?.verified === true) {
+        progress.workDiscovery = {
+          attempted: true,
+          entered: false,
+          reason: 'waiting_for_normal_work_turn_and_picker_b',
+          runtimeEnabled: true,
+          source: 'normal_work_policy_request',
+        };
+        logRuntime('info', 'verification', 'verification_work_activation_turn_started', {
+          tabId, phase: 'post_gpt_5_6_sol', source: 'normal_work_policy_request',
+        });
+
+        const activationProbe = await sendVerificationReasoningProbe(tabId, 'work-mode-bootstrap', index, queue.length);
+        let activationSettled = null;
+        if (activationProbe?.sent) {
+          activationSettled = await sendTabMessage(tabId, {
+            type: 'GPTLOCK_WAIT_FOR_PROBE_SETTLED',
+            assistantCountBefore: activationProbe.assistantCountBefore ?? 0,
+            timeoutMs: AUTO_VERIFY_RESPONSE_TIMEOUT_MS,
+          });
+        }
+
+        // Do not reload/stop/recover this bootstrap turn. A failed product Work request
+        // is evidence that the transition did not happen; recovery must not become a
+        // second authority that mutates the page.
+        let workCatalog = null;
+        if (activationSettled?.settled === true) {
+          const deadline = Date.now() + 10000;
+          do {
+            workCatalog = await discoverAccountCatalog(tabId);
+            progress.discoveryPasses += 1;
+            if (workCatalog?.pickerMode === 'B') break;
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          } while (Date.now() < deadline);
+        }
+
+        const entered = activationSettled?.settled === true && workCatalog?.pickerMode === 'B';
+        const addedFromB = entered ? mergeCatalog(workCatalog, 'work-picker-b') : 0;
+        progress.workDiscovery = {
+          attempted: true,
+          entered,
+          reason: entered ? 'normal_work_turn_picker_b_observed'
+            : activationSettled?.interrupted === true ? 'normal_work_turn_interrupted'
+              : activationSettled?.settled === true ? 'picker_b_not_observed'
+                : 'normal_work_turn_not_settled',
+          runtimeEnabled: true,
+          source: 'normal_work_policy_request',
+          pickerMode: workCatalog?.pickerMode ?? null,
+          added: addedFromB,
+        };
+        logRuntime(entered ? 'info' : 'warn', 'verification', 'verification_work_mode_transition', {
+          tabId, phase: 'post_gpt_5_6_sol', entered,
+          source: 'normal_work_policy_request',
+          reason: progress.workDiscovery.reason,
+          pickerMode: workCatalog?.pickerMode ?? null,
+          added: addedFromB,
+        });
+        workActivationPending = false;
+        if (addedFromB) stablePasses = 0;
+        await broadcastTabState(tabId);
+      } else {
+        progress.workDiscovery = {
+          attempted: false,
+          entered: false,
+          reason: 'deferred_until_sol_verified',
+          runtimeEnabled: true,
+          source: 'normal_work_policy_request',
+        };
+      }
     }
 
     // A completed verified turn is already sufficient to rediscover the catalog.
