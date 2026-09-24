@@ -1,5 +1,5 @@
 /*
- ModelPro Browser Console Verifier v0.3.4
+ ModelPro Browser Console Verifier v0.3.5
  Paste this entire file into Chrome DevTools Console on https://chatgpt.com/
  It discovers visible model choices, selects each model, sends deterministic probes,
  validates the visible answer, and automatically downloads a JSON report.
@@ -11,18 +11,19 @@
 */
 (async () => {
   'use strict';
-  const VERSION='0.3.4-browser', MARKER='ModelPro 浏览器验证';
+  const VERSION='0.3.5-browser', MARKER='ModelPro 浏览器验证';
   const WAIT=ms=>new Promise(r=>setTimeout(r,ms));
   const now=()=>new Date().toISOString();
   const norm=s=>String(s??'').replace(/\s+/g,' ').trim();
-  const logs=[], report={
+  const logs=[], diagnostics=[];
+  const report={
     type:'modelpro-browser-console-report',schemaVersion:1,version:VERSION,
     versionInfo:{name:'ModelPro Browser Console Verifier',version:VERSION,reportSchemaVersion:1},
     startedAt:now(),
     page:{url:location.href,userAgent:navigator.userAgent},
     authority:{uiSelection:true,probeAnswer:true,backendServedModel:false,
       backendReason:'chrome.debugger/CDP is unavailable to JavaScript pasted into a normal page console'},
-    discoveredModels:[],results:[],logs
+    discoveredModels:[],results:[],logs,diagnostics
   };
   let panel,statusEl,finalized=false;
   const log=(level,event,details={})=>{
@@ -127,6 +128,7 @@
   async function openPicker(){
     const before=new Set([...document.querySelectorAll('[role="menu"],[role="listbox"],[role="dialog"]')].filter(visible));
     const c=pickerCandidates();
+    diagnostic('picker_candidates',c.length?'info':'error',{count:c.length,candidates:c.slice(0,30).map(elementSnapshot)});
     if(!c.length)throw new Error('找不到顶部模型/模式选择器按钮（已明确排除左侧聊天栏）');
     const p=c.sort((a,b)=>{
       const ad=(a.getAttribute('data-testid')||'').toLowerCase(),bd=(b.getAttribute('data-testid')||'').toLowerCase();
@@ -157,12 +159,60 @@
   async function discover(){ const opened=await openPicker(); const rows=menuModelRows(opened.root); if(!rows.length){document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));throw new Error('模型菜单已打开，但未发现可识别模型项');} report.discoveredModels=rows.map(r=>({label:r.label})).sort(compare);
     if(report.discoveredModels.some(x=>invalidModelLabel(x.label))) throw new Error('catalog_discovery_invalid: 发现会话导航项，已停止以防误测试'); log('info','models_discovered',{models:report.discoveredModels.map(x=>x.label)}); document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); await WAIT(300); return report.discoveredModels; }
   async function selectModel(label){ const opened=await openPicker(); const rows=menuModelRows(opened.root),low=label.toLowerCase(); const row=rows.find(r=>r.label===label)||rows.find(r=>r.label.toLowerCase().includes(low)||low.includes(r.label.toLowerCase())); if(!row)throw new Error('模型菜单中找不到: '+label); click(row.el); await WAIT(900); log('info','model_selected',{label}); }
+  function diagnostic(stage,status,details={}){
+    const row={ts:now(),stage,status,details}; diagnostics.push(row);
+    log(status==='error'?'error':status==='warn'?'warn':'info','diagnostic_'+stage,row);
+    return row;
+  }
+  function safeAttr(el,name){ try{return el?.getAttribute?.(name)||''}catch{return''} }
+  function elementSnapshot(el){
+    if(!el)return null; const r=el.getBoundingClientRect();
+    return {tag:el.tagName,id:el.id||'',text:textOf(el).slice(0,160),
+      ariaLabel:safeAttr(el,'aria-label'),testId:safeAttr(el,'data-testid'),role:safeAttr(el,'role'),
+      rect:{left:Math.round(r.left),top:Math.round(r.top),width:Math.round(r.width),height:Math.round(r.height)},
+      inSidebar:inSidebar(el)};
+  }
+  function captureUiDiagnostic(stage){
+    const els=[...document.querySelectorAll('button,[role="button"],[role="tab"],[role="menuitem"],[role="option"]')]
+      .filter(visible).filter(el=>{const r=el.getBoundingClientRect();return r.top<220})
+      .slice(0,120).map(elementSnapshot);
+    diagnostic(stage,'info',{visibleTopControls:els,viewport:{width:innerWidth,height:innerHeight}});
+  }
+  function buildLogText(){
+    const lines=[];
+    lines.push('ModelPro Browser Console Verifier LOG');
+    lines.push('version='+VERSION);
+    lines.push('startedAt='+report.startedAt);
+    lines.push('completedAt='+(report.completedAt||''));
+    lines.push('finishReason='+(report.finishReason||''));
+    lines.push('outcome='+(report.summary?.outcome||''));
+    lines.push('url='+location.href);
+    lines.push('userAgent='+navigator.userAgent);
+    lines.push('');
+    lines.push('=== DIAGNOSTICS ===');
+    for(const d of diagnostics) lines.push(JSON.stringify(d));
+    lines.push('');
+    lines.push('=== EVENT LOG ===');
+    for(const l of logs) lines.push(JSON.stringify(l));
+    lines.push('');
+    lines.push('=== RESULTS ===');
+    for(const r of report.results) lines.push(JSON.stringify(r));
+    if(report.fatalError){lines.push('');lines.push('=== FATAL ERROR ===');lines.push(String(report.fatalError));}
+    return lines.join('\r\n');
+  }
+  function downloadText(text,name){
+    const blob=new Blob([text],{type:'text/plain;charset=utf-8'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+    document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),3000);
+  }
   function download(obj){ const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'}); const a=document.createElement('a'),stamp=new Date().toISOString().replace(/[:.]/g,'-'); a.href=URL.createObjectURL(blob); a.download='ModelPro-Browser-Report-'+stamp+'.json'; document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),3000); }
   function finalize(reason='completed'){
     if(finalized)return; finalized=true; report.completedAt=now(); report.finishReason=reason;
     report.summary={total:report.discoveredModels.length,completed:report.results.length,passed:report.results.filter(x=>x.probeAnswerConfirmed).length,failed:report.results.filter(x=>!x.probeAnswerConfirmed).length,backendServedModelConfirmed:0,outcome:reason==='fatal_error'?'browser_probe_error':
         (report.discoveredModels.length>0&&report.results.length===report.discoveredModels.length&&report.results.every(x=>x.probeAnswerConfirmed)?'browser_probe_pass':'browser_probe_incomplete')};
-    log('info','verification_finished',report.summary); download(report); if(statusEl){
+    log('info','verification_finished',report.summary);
+    const stamp=new Date().toISOString().replace(/[:.]/g,'-');
+    downloadText(buildLogText(),'ModelPro-Browser-'+VERSION+'-'+stamp+'.log'); if(statusEl){
       const err=report.fatalError?'\n错误：'+String(report.fatalError).split('\n')[0].replace(/^Error:\s*/,''):'';
       statusEl.textContent+='\n\n'+(reason==='fatal_error'?'测试报错':'完成')+'：'+report.summary.outcome+err+'\nJSON 已自动下载';
     } window.__MODELPRO_REPORT__=report;
@@ -175,6 +225,7 @@
     window.__MODELPRO_STOP__=false; makePanel();
     console.log('%cModelPro '+VERSION,'font-size:18px;font-weight:bold;color:#16a34a');
     log('info','verification_started',{version:VERSION,safety:'sidebar-excluded'});
+    captureUiDiagnostic('startup_ui_snapshot');
     const models=await discover(); if(!models.length)throw new Error('未发现模型');
     for(let i=0;i<models.length;i++){
       if(window.__MODELPRO_STOP__)break;
@@ -184,5 +235,8 @@
       result.completedAt=now(); report.results.push(result); log(result.probeAnswerConfirmed?'info':'warn','model_verification_result',result);
     }
     finalize(window.__MODELPRO_STOP__?'stopped_by_user':'completed');
-  }catch(e){ report.fatalError=e?.stack||String(e); log('error','fatal',{error:report.fatalError}); finalize('fatal_error'); }
+  }catch(e){ report.fatalError=e?.stack||String(e);
+    captureUiDiagnostic('fatal_ui_snapshot');
+    diagnostic('fatal_chain','error',{message:e?.message||String(e),stack:e?.stack||'',discoveredModels:report.discoveredModels.length,completedResults:report.results.length});
+    log('error','fatal',{error:report.fatalError}); finalize('fatal_error'); }
 })();
