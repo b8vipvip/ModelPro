@@ -89,19 +89,19 @@ test('legacy page Work-control helper remains isolated from the v0.1.10 automati
 });
 
 
-test('v0.1.9 activates Work through a real normal-policy turn after Sol and then grows the B queue',async()=>{
+test('Work activation uses a real normal-policy request after Sol and then grows the B queue',async()=>{
  const background=await r('extension/background.js');
  assert.match(background,/verification_work_activation_turn_started/);
  assert.match(background,/source: 'normal_work_policy_turn'/);
  assert.match(background,/transportModelAfter/);
  assert.match(background,/mergeCatalog\(activationCatalog, 'work-activation'\)/);
- assert.match(background,/normal_work_policy_turn_confirmed/);
+ assert.match(background,/normal_work_policy_request_confirmed/);
  assert.doesNotMatch(background,/sendTabMessage\(tabId, \{ type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' \}\)/);
  assert.match(background,/const coreCheck = \{ ok: true, standalone: true \}/);
 });
 
 
-test('v0.1.11 uses packaged random 100-prompt bank and bounded Work activation',async()=>{
+test('v0.1.12 uses packaged random 100-prompt bank and bounded Work activation',async()=>{
  const [background,content,bankText]=await Promise.all([r('extension/background.js'),r('extension/content.js'),r('extension/prompt-bank.json')]);
  const bank=JSON.parse(bankText);
  assert.equal(bank.prompts.length,100);
