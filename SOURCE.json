@@ -1,7 +1,0 @@
-{
-  "sourceRepository": "b8vipvip/GPTWork",
-  "sourceCommit": "d491987b4832e2f3da614a94582b7b06fd811bb3",
-  "scope": "complete-model-verification-chain",
-  "runtime": "Chrome MV3 unpacked extension",
-  "knownIssue": "response-model-evidence-mismatch"
-}
