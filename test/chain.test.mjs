@@ -79,3 +79,14 @@ test('v0.1.7 standalone active paths omit Native Host residue',async()=>{
  assert.doesNotMatch(diag,/sendNative|nativeDiagnostics|nativeStatus/);
  assert.doesNotMatch(background,/nativeAuditCount: bundle\.nativeDiagnostics/);
 });
+
+
+test('v0.1.8 verification performs and confirms the real ChatGPT Work page transition',async()=>{
+ const background=await r('extension/background.js'); const content=await r('extension/content.js');
+ assert.match(background,/GPTLOCK_VERIFY_ENTER_WORK_MODE/);
+ assert.match(background,/source: 'verification_page_control'/);
+ assert.match(background,/runtimeEnabled:/);
+ assert.match(content,/work_control_clicked_and_confirmed/);
+ assert.match(content,/work_control_clicked_unconfirmed/);
+ assert.match(content,/workMode: Boolean\(activeControl\)/);
+});

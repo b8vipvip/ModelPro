@@ -1659,10 +1659,19 @@ document.addEventListener('pointerdown', (event) => {
     const selected = control.getAttribute('aria-selected') === 'true'
       || control.getAttribute('aria-pressed') === 'true'
       || ['checked', 'selected', 'active'].includes(String(control.getAttribute('data-state') || '').toLowerCase());
-    if (selected) return { attempted: false, alreadySelected: true, reason: 'already_work' };
-    await trustedPointer(control, 'click', 'verification-work-mode');
-    await new Promise((resolve) => window.setTimeout(resolve, 900));
-    return { attempted: true, reason: 'work_control_clicked' };
+    if (selected) return { attempted: false, alreadySelected: true, workMode: true, reason: 'already_work' };
+    const clicked = await trustedPointer(control, 'click', 'verification-work-mode');
+    if (!clicked) return { attempted: true, workMode: false, reason: 'work_control_not_activated' };
+    const activeControl = await waitUntil(() => {
+      const candidate = verificationWorkControl();
+      if (!candidate) return null;
+      const active = candidate.getAttribute('aria-selected') === 'true'
+        || candidate.getAttribute('aria-pressed') === 'true'
+        || ['checked', 'selected', 'active'].includes(String(candidate.getAttribute('data-state') || '').toLowerCase());
+      return active ? candidate : null;
+    }, 4000, 100);
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    return { attempted: true, workMode: Boolean(activeControl), reason: activeControl ? 'work_control_clicked_and_confirmed' : 'work_control_clicked_unconfirmed' };
   }
 
   async function stopStaleGeneration() {

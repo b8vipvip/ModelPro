@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.7';
+const RUNTIME_CODE_VERSION = '0.1.8';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -1944,11 +1944,15 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
     if (item.model === 'gpt-5.5') {
       try {
         const featureState = await enableWorkModeForVerification(tabId);
-        logRuntime('info', 'verification', 'verification_work_mode_transition', {
+        const pageTransition = await sendTabMessage(tabId, { type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' });
+        const pageWork = pageTransition?.workMode === true || pageTransition?.alreadySelected === true;
+        logRuntime(pageWork ? 'info' : 'warn', 'verification', 'verification_work_mode_transition', {
           tabId,
           phase: 'post_gpt_5_5',
-          entered: featureState?.workModeEnabled === true,
-          source: 'verification_runtime_default',
+          entered: pageWork,
+          runtimeEnabled: featureState?.workModeEnabled === true,
+          source: 'verification_page_control',
+          pageTransition,
         });
       } catch (error) {
         logRuntime('warn', 'verification', 'verification_work_mode_transition', {
