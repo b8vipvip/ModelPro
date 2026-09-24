@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.5';
+const RUNTIME_CODE_VERSION = '0.1.6';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -715,23 +715,30 @@ async function syncPolicy() {
 }
 
 async function verifyObservation(observation, policy = currentPolicy) {
-  const result = await sendNative('verify', {
-    policy,
-    observation: {
-      model: observation.model ?? null,
-      reasoning: observation.reasoning ?? null,
-      evidenceSource: observation.evidenceSource,
-      capturedAt: observation.capturedAt ?? new Date().toISOString(),
-      requestId: observation.requestId || `extension-${Date.now()}-${++requestSequence}`,
-    },
-  });
-  await writeNativeStatus({
-    connected: true,
-    lastError: null,
-    lastSeenAt: new Date().toISOString(),
-    lastVerification: result,
-    policyRevision: result.policyRevision,
-  });
+  const normalizedPolicy = normalizePolicy(policy);
+  const model = normalizeConcreteModelId(observation?.model);
+  const reasoning = normalizeReasoningLevel(observation?.reasoning);
+  const reasons = [];
+  if (!model) reasons.push('model_missing');
+  else if (!normalizedPolicy.lockedModels.includes(model)) reasons.push('model_not_allowed');
+  // Response metadata does not always expose reasoning. ModelPro's standalone
+  // model-verification transaction is about page/request/served-model identity,
+  // so absent reasoning is incomplete metadata, not a reason to discard concrete
+  // backend served-model evidence.
+  if (reasoning && !normalizedPolicy.allowedReasoningLevels.includes(reasoning)) reasons.push('reasoning_not_allowed');
+  const verdict = reasons.length ? (reasons.includes('model_not_allowed') || reasons.includes('reasoning_not_allowed') ? 'mismatch' : 'unverified') : 'verified';
+  const result = {
+    verdict,
+    decision: verdict === 'verified' ? 'allow' : verdict === 'mismatch' ? 'block' : 'observe',
+    reason: reasons[0] || null,
+    reasons,
+    model,
+    reasoning,
+    evidenceSource: observation?.evidenceSource ?? 'unknown',
+    requestId: observation?.requestId || `extension-${Date.now()}-${++requestSequence}`,
+    verifiedAt: new Date().toISOString(),
+    standalone: true,
+  };
   return result;
 }
 

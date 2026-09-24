@@ -60,3 +60,12 @@ test('v0.1.5 recovers picker closed by first debugger attach and popup auto-expo
  assert.match(popup,/finally\{const name=await exportLog\('ModelPro-auto'\)/);
  assert.match(popup,/测试已结束，LOG 已自动导出/);
 });
+
+
+test('v0.1.6 verifies response evidence locally without GPTWork native host',async()=>{
+ const background=await r('extension/background.js');
+ assert.match(background,/standalone: true/);
+ assert.match(background,/normalizeConcreteModelId\(observation\?\.model\)/);
+ assert.doesNotMatch(background,/async function verifyObservation[\\s\\S]{0,300}sendNative\('verify'/);
+ assert.match(background,/absent reasoning is incomplete metadata, not a reason to discard concrete/);
+});
