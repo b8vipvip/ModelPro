@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.26';
+const RUNTIME_CODE_VERSION = '0.1.27';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -774,7 +774,6 @@ function mergeResponseEvidence(state, evidence) {
     capturedAt: evidence?.capturedAt ?? previous?.capturedAt ?? new Date().toISOString(),
     model: modelConflict ? null : evidence?.model || previousModel || null,
     reasoning: reasoningConflict ? null : evidence?.reasoning || previous?.reasoning || null,
-    routingModel: evidence?.routingModel || previous?.routingModel || null,
     conflicts: { model: modelConflict, reasoning: reasoningConflict },
     fields: {
       model: evidence?.fields?.model || (currentHasModelAuthority ? previous?.fields?.model : null) || null,
@@ -793,15 +792,11 @@ function verificationResponseObservation(tabId, responseEvidence) {
   const transaction = verificationTransactionForTab(tabId);
   const target = normalizeConcreteModelId(transaction?.model);
   const observed = normalizeConcreteModelId(responseEvidence?.model);
-  const routingModel = normalizeConcreteModelId(responseEvidence?.routingModel);
   const field = String(responseEvidence?.fields?.model || '');
   // default_model_slug describes a fallback/default and is not proof of the model
   // that served this turn. In contrast resolved/served/used model fields describe
   // backend execution and MUST remain authoritative for strict page=request=response
   // verification. A mismatch there is a real mismatch, not evidence to hide.
-  if (target && routingModel === target) {
-    return { model: target, backendResolvedModel: observed, routingModel, downgraded: false, reason: null, profileConfirmed: true };
-  }
   const weakDefaultOnly = /(?:^|\.)default_model_slug$/i.test(field);
   if (observed && weakDefaultOnly) {
     return {
@@ -1907,6 +1902,12 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
 
       const reattached = await networkMonitor.attach(tabId);
       if (!reattached) throw new Error(state.monitor?.error || 'Request lock monitor did not reattach after model selection');
+      // A Work bootstrap/navigation can detach CDP and clears responseCaptureTabs.
+      // Fetch-only reattach is insufficient: verification needs the same Network
+      // lifecycle for the requestId and its terminal response. Re-enable it for
+      // every model immediately before the probe.
+      const responseCaptureReady = await networkMonitor.enableResponseCapture(tabId);
+      if (!responseCaptureReady) throw new Error('Response capture did not re-enable before verification probe');
       const probe = await sendVerificationReasoningProbe(tabId, 'GPTWork 模型验证', index + 1, queue.length);
       if (!probe?.sent) throw new Error('Visible model verification probe was not sent');
       const attemptStartedMs = Date.now() - 1500;

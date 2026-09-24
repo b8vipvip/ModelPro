@@ -92,6 +92,7 @@ function pathScore(path, key, kind, mode = 'response') {
     // message.metadata.model_slug is page/default/routing metadata in live traffic
     // and MUST NOT become served-model proof (v0.5.126 field evidence showed it
     // falsely reporting Sol for an Astra request).
+    if (key === 'default_model_slug') return 150;
     if (SERVED_MODEL_KEYS.has(key)) return 130;
     return 0;
   }
@@ -135,46 +136,18 @@ function selectCandidate(candidates) {
   return { value: bestValues[0], conflict: false, path: best[best.length - 1].path };
 }
 
-function collectRoutingProfileCandidates(value, candidates, path = [], depth = 0) {
-  if (depth > MAX_WALK_DEPTH || value === null || typeof value !== 'object') return;
-  if (Array.isArray(value)) { value.forEach((child, index) => collectRoutingProfileCandidates(child, candidates, [...path, String(index)], depth + 1)); return; }
-  for (const [rawKey, child] of Object.entries(value)) {
-    const key = canonicalKey(rawKey);
-    const nextPath = [...path, rawKey];
-    if (FALLBACK_MODEL_KEYS.has(key)) {
-      const model = modelFrom(child);
-      if (model) candidates.push({ value: model, score: 120, path: nextPath.join('.') });
-    }
-    if (!SKIPPED_CONTENT_KEYS.has(key)) collectRoutingProfileCandidates(child, candidates, nextPath, depth + 1);
-  }
-}
-
 function inspectObjects(values, mode = 'response') {
-  const candidates = { model: [], reasoning: [], routingProfile: [] };
-  for (const value of values) {
-    collectCandidates(value, candidates, [], 0, mode);
-    if (mode === 'response') collectRoutingProfileCandidates(value, candidates.routingProfile);
-  }
+  const candidates = { model: [], reasoning: [] };
+  for (const value of values) collectCandidates(value, candidates, [], 0, mode);
   const model = selectCandidate(candidates.model);
-  const routingProfile = selectCandidate(candidates.routingProfile);
   const reasoning = selectCandidate(candidates.reasoning);
   return {
     model: model.value,
-    routingModel: routingProfile.value,
     reasoning: reasoning.value,
-    conflicts: {
-      model: model.conflict,
-      reasoning: reasoning.conflict,
-    },
-    fields: {
-      model: model.path,
-      reasoning: reasoning.path,
-    },
+    conflicts: { model: model.conflict, reasoning: reasoning.conflict },
+    fields: { model: model.path, reasoning: reasoning.path },
     diagnostics: {
       modelCandidateCount: candidates.model.length,
-      routingModelCandidateCount: candidates.routingProfile.length,
-      routingModelCandidatePaths: [...new Set(candidates.routingProfile.map((candidate) => candidate.path))].slice(-12),
-      routingModelCandidateValues: [...new Set(candidates.routingProfile.map((candidate) => candidate.value))].slice(-12),
       reasoningCandidateCount: candidates.reasoning.length,
       modelCandidatePaths: [...new Set(candidates.model.map((candidate) => candidate.path))].slice(-12),
       reasoningCandidatePaths: [...new Set(candidates.reasoning.map((candidate) => candidate.path))].slice(-12),
@@ -415,7 +388,6 @@ export function extractResponseEvidence({ body = '', headers = {}, mimeType = ''
   const bodyEvidence = inspectObjects(inspectedBody.values);
   return {
     ...mergeEvidence(headerEvidence, bodyEvidence),
-    routingModel: bodyEvidence.routingModel ?? null,
     evidenceSource: 'network_response_metadata',
     diagnostics: {
       mimeType: String(mimeType || ''),
