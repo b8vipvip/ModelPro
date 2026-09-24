@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.24';
+const RUNTIME_CODE_VERSION = '0.1.25';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -991,8 +991,9 @@ const networkMonitor = new ChatGptNetworkMonitor({
   },
   onRewrite(tabId, rewrite) {
     const state = ensureTabState(tabId);
+    const capturedAt = new Date().toISOString();
     state.lastRewrite = {
-      capturedAt: new Date().toISOString(),
+      capturedAt,
       endpoint: rewrite.endpoint ?? null,
       requestId: rewrite.requestId ?? null,
       fetchRequestId: rewrite.fetchRequestId ?? null,
@@ -1011,6 +1012,20 @@ const networkMonitor = new ChatGptNetworkMonitor({
       error: rewrite.error ?? null,
     };
     if (rewrite.error) state.lastError = rewrite.error;
+    // Fetch interception is the terminal request authority. Work-mode requests can
+    // legitimately omit Network.requestWillBeSent's networkId at this boundary, so
+    // retain the forwarded request as first-class verification evidence instead of
+    // waiting forever for a Network requestId that may never be correlated.
+    if (rewrite.authorityKind === 'verification-transaction' && rewrite.modelAfter && !rewrite.error) {
+      state.lastForwardedRequest = {
+        capturedAt,
+        requestId: rewrite.requestId ?? null,
+        fetchRequestId: rewrite.fetchRequestId ?? null,
+        model: rewrite.modelAfter,
+        transportModel: rewrite.transportModelAfter ?? null,
+        authorityModel: rewrite.authorityModel ?? null,
+      };
+    }
     const verification = verificationTransactionForTab(tabId);
     if (verification?.model && rewrite.authorityKind !== 'verification-transaction') {
       state.lastError = 'verification_request_missing_terminal_authority';
@@ -1399,6 +1414,7 @@ function resetVerificationAttempt(state) {
   state.probeArmed = false;
   state.lastRewrite = null;
   state.lastRequest = null;
+  state.lastForwardedRequest = null;
   state.lastVerification = null;
   state.lastResponseEvidence = null;
   state.lastEvidenceDiagnostics = null;
@@ -1870,7 +1886,8 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
       // authority. Network.requestWillBeSent may expose the page's pre-interception
       // body, so keep it only as diagnostic evidence. Response/stream metadata remains
       // the independent backend-served-model authority.
-      const requestId = state.lastRequest?.requestId ?? null;
+      const forwardedRequestId = state.lastForwardedRequest?.requestId ?? null;
+      const requestId = state.lastRequest?.requestId ?? forwardedRequestId;
       const networkObservedRequestModel = normalizeConcreteModelId(state.lastRequest?.model);
       const rewriteCapturedAtMs = Date.parse(state.lastRewrite?.capturedAt || '');
       const authoritativeRewrite = Boolean(

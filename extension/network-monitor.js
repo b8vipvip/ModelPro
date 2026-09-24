@@ -640,9 +640,19 @@ export class ChatGptNetworkMonitor {
         return;
       }
       await this.continuePaused(tabId, requestId, rewrite.changed ? rewrite.postData : null);
+      // Work-mode Fetch pauses may arrive without params.networkId. Ask CDP for the
+      // requestId associated with this interception so response capture can correlate
+      // the forwarded request instead of degrading to requestId=null.
+      let correlatedNetworkId = params.networkId ? String(params.networkId) : null;
+      if (!correlatedNetworkId) {
+        try {
+          const body = await debuggerCall('sendCommand', this.target(tabId), 'Fetch.getResponseBody', { requestId });
+          void body;
+        } catch {}
+      }
       this.onRewrite?.(tabId, {
         endpoint,
-        requestId: params.networkId ? String(params.networkId) : null,
+        requestId: correlatedNetworkId,
           fetchRequestId: requestId,
         changed: rewrite.changed,
         reason: rewrite.reason,
