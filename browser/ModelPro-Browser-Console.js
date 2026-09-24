@@ -1,5 +1,5 @@
 /*
- ModelPro Browser Console Verifier v0.3.6
+ ModelPro Browser Console Verifier v0.3.7
  Paste this entire file into Chrome DevTools Console on https://chatgpt.com/
  It discovers visible model choices, selects each model, sends deterministic probes,
  validates the visible answer, and automatically downloads a JSON report.
@@ -11,7 +11,7 @@
 */
 (async () => {
   'use strict';
-  const VERSION='0.3.6-browser', MARKER='ModelPro 浏览器验证';
+  const VERSION='0.3.7-browser', MARKER='ModelPro 浏览器验证';
   const WAIT=ms=>new Promise(r=>setTimeout(r,ms));
   const now=()=>new Date().toISOString();
   const norm=s=>String(s??'').replace(/\s+/g,' ').trim();
@@ -124,9 +124,12 @@
     all.push(...modeRadios.filter(x=>!all.includes(x)));
     return all.filter(el=>{
       const r=el.getBoundingClientRect();
-      const s=[textOf(el),el.getAttribute('aria-label'),el.getAttribute('data-testid')].join(' ');
+      const text=textOf(el);
+      const role=el.getAttribute('role')||'';
+      const s=[text,el.getAttribute('aria-label'),el.getAttribute('data-testid')].join(' ');
+      const explicitChatRadio=role==='radio' && /^(聊天|chat)$/i.test(text);
       return r.top < Math.min(180, innerHeight*.22) &&
-        /model|模型|gpt|chatgpt|astra|sol|pro|luna|terra/i.test(s) &&
+        (explicitChatRadio || /model|模型|gpt|chatgpt|astra|sol|pro|luna|terra/i.test(s)) &&
         !invalidModelLabel(s) && !/send|发送|share|共享|new chat/i.test(s);
     });
   }
