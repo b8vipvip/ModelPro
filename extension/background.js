@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.31';
+const RUNTIME_CODE_VERSION = '0.1.32';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -797,15 +797,6 @@ function verificationResponseObservation(tabId, responseEvidence) {
   // that served this turn. In contrast resolved/served/used model fields describe
   // backend execution and MUST remain authoritative for strict page=request=response
   // verification. A mismatch there is a real mismatch, not evidence to hide.
-  const weakDefaultOnly = /(?:^|\.)default_model_slug$/i.test(field);
-  if (observed && weakDefaultOnly) {
-    return {
-      model: null,
-      backendResolvedModel: observed,
-      downgraded: true,
-      reason: 'default_model_not_served_model',
-    };
-  }
   return {
     model: responseEvidence?.conflicts?.model ? null : observed,
     backendResolvedModel: target && observed && observed !== target ? observed : null,

@@ -92,8 +92,8 @@ function pathScore(path, key, kind, mode = 'response') {
     // message.metadata.model_slug is page/default/routing metadata in live traffic
     // and MUST NOT become served-model proof (v0.5.126 field evidence showed it
     // falsely reporting Sol for an Astra request).
-    if (key === 'default_model_slug') return 150;
-    if (SERVED_MODEL_KEYS.has(key)) return 130;
+    if (SERVED_MODEL_KEYS.has(key)) return 150;
+    if (key === 'default_model_slug') return 110;
     return 0;
   }
   return metadata ? 115 : path.length <= 3 ? 95 : 0;
