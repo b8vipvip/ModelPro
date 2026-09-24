@@ -1,5 +1,5 @@
 /*
- ModelPro Browser Console Verifier v0.3.1
+ ModelPro Browser Console Verifier v0.3.2
  Paste this entire file into Chrome DevTools Console on https://chatgpt.com/
  It discovers visible model choices, selects each model, sends deterministic probes,
  validates the visible answer, and automatically downloads a JSON report.
@@ -11,12 +11,14 @@
 */
 (async () => {
   'use strict';
-  const VERSION='0.3.1-browser', MARKER='ModelPro 浏览器验证';
+  const VERSION='0.3.2-browser', MARKER='ModelPro 浏览器验证';
   const WAIT=ms=>new Promise(r=>setTimeout(r,ms));
   const now=()=>new Date().toISOString();
   const norm=s=>String(s??'').replace(/\s+/g,' ').trim();
   const logs=[], report={
-    type:'modelpro-browser-console-report',schemaVersion:1,version:VERSION,startedAt:now(),
+    type:'modelpro-browser-console-report',schemaVersion:1,version:VERSION,
+    versionInfo:{name:'ModelPro Browser Console Verifier',version:VERSION,reportSchemaVersion:1},
+    startedAt:now(),
     page:{url:location.href,userAgent:navigator.userAgent},
     authority:{uiSelection:true,probeAnswer:true,backendServedModel:false,
       backendReason:'chrome.debugger/CDP is unavailable to JavaScript pasted into a normal page console'},
@@ -44,7 +46,11 @@
   function paint(){ if(!statusEl)return; const last=logs.at(-1); statusEl.textContent='ModelPro '+VERSION+'\n'+(last?last.event:'starting')+'\nresults '+report.results.length+'/'+report.discoveredModels.length; }
   function makePanel(){
     panel=document.createElement('div'); panel.id='modelpro-browser-panel';
-    Object.assign(panel.style,{position:'fixed',right:'16px',bottom:'16px',zIndex:2147483647,width:'340px',padding:'12px',background:'#111',color:'#fff',font:'12px/1.45 Consolas,monospace',border:'1px solid #555',borderRadius:'8px',boxShadow:'0 4px 20px #0008',whiteSpace:'pre-wrap'});
+    Object.assign(panel.style,{position:'fixed',right:'16px',bottom:'110px',zIndex:2147483647,width:'340px',padding:'12px',background:'rgba(17,17,17,0.65)',color:'#fff',font:'12px/1.45 Consolas,monospace',border:'1px solid #555',borderRadius:'8px',boxShadow:'0 4px 20px #0008',whiteSpace:'pre-wrap'});
+    const title=document.createElement('div');
+    title.textContent='ModelPro '+VERSION;
+    Object.assign(title.style,{fontWeight:'700',marginBottom:'6px'});
+    panel.append(title);
     statusEl=document.createElement('div'); panel.append(statusEl);
     const stop=document.createElement('button'); stop.textContent='停止并导出'; stop.style.marginTop='8px'; stop.onclick=()=>{window.__MODELPRO_STOP__=true;finalize('stopped_by_user')}; panel.append(stop); document.body.append(panel);
   }
