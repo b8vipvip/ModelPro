@@ -976,9 +976,15 @@ document.addEventListener('pointerdown', (event) => {
     try { element.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }); } catch {}
     try { element.focus?.({ preventScroll: true }); } catch {}
     try {
-      // Attaching chrome.debugger can show Chrome's debugging infobar and move the
-      // entire viewport. Never compute coordinates until that layout change is over.
+      // Attach CDP before taking the actionable pointer point. Chrome can show its
+      // debugging infobar on the first attach, which may close/reflow a Radix picker.
+      // If this exact owned element disappears, tell the caller immediately so it can
+      // reopen the same semantic picker chain instead of waiting on a stale 0x0 node.
       await sendMessage({ type: 'GPTLOCK_TRUSTED_POINTER_PREPARE' });
+      if (!element.isConnected || !visible(element)) {
+        pointerTrace('invalidated_after_debugger_attach', { traceId, action, source, target: compactElementProbe(element) });
+        return false;
+      }
       // chrome.debugger's infobar and Radix slider transitions can both move the picker.
       // Wait for the exact owned element to stop moving AND own its center before dispatch.
       // This is a readiness barrier, not a second selector/authority path.
@@ -1252,11 +1258,10 @@ document.addEventListener('pointerdown', (event) => {
     let activeOpener = opener;
     let opened = await modelPickerPointer(activeOpener, 'click', 'model-picker-submenu');
     if (!opened) {
-      // The debugger infobar / slider animation can replace the semantic "Select model"
-      // row between discovery and the trusted-pointer readiness barrier. The catalog
-      // already proved this exact owned picker topology, so reacquire ONLY the same
-      // semantic opener inside the same picker and retry once. Never fall back to a
-      // global menu or coordinates.
+      // The first debugger attach can close the whole Radix picker, not merely replace
+      // its Select-model row. Reacquire in-place only while the owned picker remains
+      // visible; otherwise reopen the SAME composer picker once, then reacquire the
+      // same accessible Select-model row. This preserves the mature selector authority.
       activeOpener = modelSubmenuOpener(picker);
       pickerTopologyProbe('second-layer-reacquired', {
         previousOpener: compactElementProbe(opener),
@@ -1264,6 +1269,20 @@ document.addEventListener('pointerdown', (event) => {
       });
       if (activeOpener && activeOpener !== opener) {
         opened = await modelPickerPointer(activeOpener, 'click', 'model-picker-submenu-reacquired');
+      }
+      if (!opened && (!picker?.isConnected || !visible(picker))) {
+        pointerTrace('picker_reopen_after_debugger_attach', { trigger: compactElementProbe(trigger) });
+        const reopenBeforeScopes = new Set(modelPopupScopes());
+        const triggerNow = composerIntelligenceTrigger();
+        if (triggerNow && await modelPickerPointer(triggerNow, 'click', 'model-picker-trigger-reopen')) {
+          picker = await waitUntil(() => popupOwnedByTrigger(triggerNow, reopenBeforeScopes), 2200, 80);
+          activeOpener = modelSubmenuOpener(picker);
+          pickerTopologyProbe('second-layer-reopened', {
+            ownedPicker: compactElementProbe(picker),
+            opener: compactElementProbe(activeOpener),
+          });
+          if (activeOpener) opened = await modelPickerPointer(activeOpener, 'click', 'model-picker-submenu-after-reopen');
+        }
       }
     }
     if (!opened) return { trigger, picker, opener: activeOpener || opener, submenu: null, rows: [] };

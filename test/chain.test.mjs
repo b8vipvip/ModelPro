@@ -50,3 +50,13 @@ test('standalone verification reinjects content scripts into pre-existing ChatGP
  assert.match(background,/chrome\.scripting\.executeScript/);
  assert.match(background,/Receiving end does not exist/);
 });
+
+
+test('v0.1.5 recovers picker closed by first debugger attach and popup auto-exports diagnostics',async()=>{
+ const content=await r('extension/content.js'); const popup=await r('extension/popup.js');
+ assert.match(content,/invalidated_after_debugger_attach/);
+ assert.match(content,/picker_reopen_after_debugger_attach/);
+ assert.match(content,/model-picker-submenu-after-reopen/);
+ assert.match(popup,/finally\{const name=await exportLog\('ModelPro-auto'\)/);
+ assert.match(popup,/测试已结束，LOG 已自动导出/);
+});
