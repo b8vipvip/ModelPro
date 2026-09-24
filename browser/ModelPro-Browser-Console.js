@@ -1,7 +1,7 @@
 /*
- ModelPro Browser Console Verifier v0.3.8
+ ModelPro Browser Console Verifier v0.4.0
  Paste this entire file into Chrome DevTools Console on https://chatgpt.com/
- It discovers visible model choices, selects each model, sends deterministic probes,
+ It uses conversation-driven discovery when the home page has no visible model picker,
  validates the visible answer, and automatically downloads a JSON report.
 
  IMPORTANT AUTHORITY NOTE:
@@ -11,7 +11,7 @@
 */
 (async () => {
   'use strict';
-  const VERSION='0.3.8-browser', MARKER='ModelPro 浏览器验证';
+  const VERSION='0.4.0-browser', MARKER='ModelPro 浏览器验证';
   const WAIT=ms=>new Promise(r=>setTimeout(r,ms));
   const now=()=>new Date().toISOString();
   const norm=s=>String(s??'').replace(/\s+/g,' ').trim();
@@ -155,6 +155,49 @@
     if(inSidebar(root))throw new Error('安全停止：检测到左侧聊天栏菜单，拒绝继续点击');
     return {button:p,root};
   }
+  function composer(){
+    const sels=['#prompt-textarea','textarea','[contenteditable="true"][data-lexical-editor="true"]','[contenteditable="true"]'];
+    return sels.flatMap(s=>[...document.querySelectorAll(s)]).find(el=>visible(el)&&!inSidebar(el))||null;
+  }
+  function composerSnapshot(){ return elementSnapshot(composer()); }
+  function urlSnapshot(){ return {href:location.href,pathname:location.pathname}; }
+  async function waitConversationTransition(beforeUrl,beforeAssist,timeout=30000){
+    const started=Date.now(); let last={};
+    while(Date.now()-started<timeout){
+      if(window.__MODELPRO_STOP__)throw new Error('stopped_by_user');
+      const state={url:urlSnapshot(),assistantCount:assistantBlocks().length,composer:composerSnapshot(),pickers:pickerCandidates().map(elementSnapshot)};
+      last=state;
+      if(location.href!==beforeUrl || state.assistantCount>beforeAssist || state.pickers.length){
+        diagnostic('conversation_transition','info',{elapsedMs:Date.now()-started,...state});
+        return state;
+      }
+      await WAIT(300);
+    }
+    diagnostic('conversation_transition','warn',{elapsedMs:Date.now()-started,...last});
+    return last;
+  }
+  async function bootstrapConversationDiscovery(){
+    const modes=modeControls(), chat=modes.find(x=>/^(聊天|chat)$/i.test(textOf(x)));
+    diagnostic('conversation_bootstrap','info',{urlBefore:urlSnapshot(),modeControls:modes.map(elementSnapshot),composer:composerSnapshot()});
+    if(chat && chat.getAttribute('aria-checked')!=='true' && chat.getAttribute('data-state')!=='checked'){
+      click(chat); await WAIT(350);
+      diagnostic('chat_mode_selected','info',{control:elementSnapshot(chat)});
+    }
+    const p=probe(1,1),beforeUrl=location.href,beforeAssist=assistantBlocks().length;
+    const prompt=MARKER+' 会话发现：'+p.text;
+    log('info','bootstrap_probe_prepared',{prompt,expectedValue:p.expectedValue,beforeUrl,beforeAssist});
+    await sendPrompt(prompt);
+    diagnostic('bootstrap_probe_sent','info',{urlImmediatelyAfter:location.href,composer:composerSnapshot()});
+    await waitConversationTransition(beforeUrl,beforeAssist);
+    const ans=await waitAnswer(p.expectedValue,beforeAssist,60000);
+    report.bootstrap={probe:p,answer:ans.answer,answerExcerpt:ans.text,probeAnswerConfirmed:ans.ok,timedOut:ans.timedOut===true,urlAfter:location.href};
+    log(ans.ok?'info':'warn','bootstrap_probe_result',report.bootstrap);
+    await WAIT(500);
+    captureUiDiagnostic('post_conversation_ui_snapshot');
+    const post=pickerCandidates();
+    diagnostic('post_conversation_picker_candidates',post.length?'info':'warn',{count:post.length,candidates:post.map(elementSnapshot),modeControls:modeControls().map(elementSnapshot),url:urlSnapshot()});
+    return post;
+  }
   function menuModelRows(root){
     if(!root||!visible(root))return[];
     if(inSidebar(root))throw new Error('catalog_discovery_invalid: 模型菜单根节点位于左侧聊天栏');
@@ -240,11 +283,24 @@
     console.log('%cModelPro '+VERSION,'font-size:18px;font-weight:bold;color:#16a34a');
     log('info','verification_started',{version:VERSION,safety:'sidebar-excluded'});
     captureUiDiagnostic('startup_ui_snapshot');
-    const models=await discover(); if(!models.length)throw new Error('未发现模型');
+    let models=[];
+    if(pickerCandidates().length){
+      models=await discover();
+    }else{
+      await bootstrapConversationDiscovery();
+      if(pickerCandidates().length) models=await discover();
+      else {
+        report.discoveredModels=[{label:'current-conversation-model',discovery:'conversation-driven',selectable:false}];
+        models=report.discoveredModels;
+        diagnostic('catalog_fallback','warn',{reason:'no_visible_model_picker_after_real_conversation',models});
+      }
+    }
+    if(!models.length)throw new Error('未发现可验证模型');
     for(let i=0;i<models.length;i++){
       if(window.__MODELPRO_STOP__)break;
       const model=models[i],result={ordinal:i+1,label:model.label,startedAt:now(),uiSelected:false,probeAnswerConfirmed:false,backendServedModelConfirmed:false,backendEvidence:'not_available_in_page_console'};
-      try{ await selectModel(model.label); result.uiSelected=true; const p=probe(i+1,models.length); result.probe=p; const before=assistantBlocks().length; await sendPrompt(p.text); const ans=await waitAnswer(p.expectedValue,before); result.answer=ans.answer; result.answerExcerpt=ans.text; result.probeAnswerConfirmed=ans.ok; result.timedOut=ans.timedOut===true; if(!ans.ok)result.error=ans.timedOut?'response_timeout':'unexpected_answer:'+ans.answer; }
+      try{ if(model.selectable!==false){await selectModel(model.label); result.uiSelected=true;} else {result.uiSelected=null; result.selectionSkipped='no_visible_model_picker';}
+        const p=probe(i+1,models.length); result.probe=p; const before=assistantBlocks().length; await sendPrompt(p.text); const ans=await waitAnswer(p.expectedValue,before); result.answer=ans.answer; result.answerExcerpt=ans.text; result.probeAnswerConfirmed=ans.ok; result.timedOut=ans.timedOut===true; if(!ans.ok)result.error=ans.timedOut?'response_timeout':'unexpected_answer:'+ans.answer; }
       catch(e){ result.error=e?.message||String(e); log('error','model_verification_error',{model:model.label,error:result.error}); }
       result.completedAt=now(); report.results.push(result); log(result.probeAnswerConfirmed?'info':'warn','model_verification_result',result);
     }
