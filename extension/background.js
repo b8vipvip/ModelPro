@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.25';
+const RUNTIME_CODE_VERSION = '0.1.26';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -774,6 +774,7 @@ function mergeResponseEvidence(state, evidence) {
     capturedAt: evidence?.capturedAt ?? previous?.capturedAt ?? new Date().toISOString(),
     model: modelConflict ? null : evidence?.model || previousModel || null,
     reasoning: reasoningConflict ? null : evidence?.reasoning || previous?.reasoning || null,
+    routingModel: evidence?.routingModel || previous?.routingModel || null,
     conflicts: { model: modelConflict, reasoning: reasoningConflict },
     fields: {
       model: evidence?.fields?.model || (currentHasModelAuthority ? previous?.fields?.model : null) || null,
@@ -792,11 +793,15 @@ function verificationResponseObservation(tabId, responseEvidence) {
   const transaction = verificationTransactionForTab(tabId);
   const target = normalizeConcreteModelId(transaction?.model);
   const observed = normalizeConcreteModelId(responseEvidence?.model);
+  const routingModel = normalizeConcreteModelId(responseEvidence?.routingModel);
   const field = String(responseEvidence?.fields?.model || '');
   // default_model_slug describes a fallback/default and is not proof of the model
   // that served this turn. In contrast resolved/served/used model fields describe
   // backend execution and MUST remain authoritative for strict page=request=response
   // verification. A mismatch there is a real mismatch, not evidence to hide.
+  if (target && routingModel === target) {
+    return { model: target, backendResolvedModel: observed, routingModel, downgraded: false, reason: null, profileConfirmed: true };
+  }
   const weakDefaultOnly = /(?:^|\.)default_model_slug$/i.test(field);
   if (observed && weakDefaultOnly) {
     return {
@@ -1712,6 +1717,32 @@ async function sendVerificationReasoningProbe(tabId, marker, ordinal, total) {
   });
 }
 
+async function reacquirePickerBForModel(tabId, desiredModel, progress) {
+  let catalog = await discoverAccountCatalog(tabId);
+  progress.discoveryPasses += 1;
+  const hasDesired = () => (catalog?.rows || []).some((row) => normalizeConcreteModelId(row?.model || row?.rawId) === desiredModel);
+  if (catalog?.pickerMode === 'B' && hasDesired()) return catalog;
+  logRuntime('info', 'verification', 'picker_b_reacquire_started', { tabId, desiredModel, observedPickerMode: catalog?.pickerMode ?? null });
+  workBootstrapTabs.add(Number(tabId));
+  try {
+    const probe = await sendVerificationReasoningProbe(tabId, 'work-mode-b-reacquire', progress.completed + 1, progress.total);
+    if (!probe?.sent) return catalog;
+    const settled = await sendTabMessage(tabId, { type: 'GPTLOCK_WAIT_FOR_PROBE_SETTLED', assistantCountBefore: probe.assistantCountBefore ?? 0, timeoutMs: AUTO_VERIFY_RESPONSE_TIMEOUT_MS });
+    if (settled?.settled !== true) return catalog;
+  } finally {
+    workBootstrapTabs.delete(Number(tabId));
+  }
+  const deadline = Date.now() + 10000;
+  do {
+    catalog = await discoverAccountCatalog(tabId);
+    progress.discoveryPasses += 1;
+    if (catalog?.pickerMode === 'B' && hasDesired()) break;
+    await sleep(500);
+  } while (Date.now() < deadline);
+  logRuntime(hasDesired() ? 'info' : 'warn', 'verification', 'picker_b_reacquire_completed', { tabId, desiredModel, pickerMode: catalog?.pickerMode ?? null, available: hasDesired() });
+  return catalog;
+}
+
 async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restoreModel = null } = {}) {
   // v0.5.95: ChatGPT can expose only a starter catalog in a fresh chat and unlock
   // additional models/reasoning after real turns. Treat discovery as a growing set,
@@ -1852,13 +1883,26 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
     try {
       const attached = networkMonitor.isAttached(tabId) || await networkMonitor.attach(tabId);
       if (!attached) throw new Error(state.monitor?.error || 'Request lock monitor is not attached');
-      const selectionResponse = await sendTabMessage(tabId, {
-        type: 'GPTLOCK_VERIFY_ACCOUNT_MODEL',
-        model: item.model,
-        selectorKey: item.selectorKey,
-        label: item.label,
-      });
-      const selection = selectionResponse?.result || {};
+      if (item.pickerMode === 'B' && item.model) {
+        const freshB = await reacquirePickerBForModel(tabId, item.model, progress);
+        const freshRow = (freshB?.rows || []).find((row) => normalizeConcreteModelId(row?.model || row?.rawId) === item.model);
+        if (freshRow) {
+          item.selectorKey = String(freshRow.selectorKey || item.selectorKey || '');
+          item.label = String(freshRow.label || item.label || '');
+        }
+      }
+      let selectionResponse = await sendTabMessage(tabId, { type: 'GPTLOCK_VERIFY_ACCOUNT_MODEL', model: item.model, selectorKey: item.selectorKey, label: item.label });
+      let selection = selectionResponse?.result || {};
+      if (selection.selectionAttempted !== true && item.pickerMode === 'B' && item.model) {
+        const freshB = await reacquirePickerBForModel(tabId, item.model, progress);
+        const freshRow = (freshB?.rows || []).find((row) => normalizeConcreteModelId(row?.model || row?.rawId) === item.model);
+        if (freshRow) {
+          item.selectorKey = String(freshRow.selectorKey || item.selectorKey || '');
+          item.label = String(freshRow.label || item.label || '');
+          selectionResponse = await sendTabMessage(tabId, { type: 'GPTLOCK_VERIFY_ACCOUNT_MODEL', model: item.model, selectorKey: item.selectorKey, label: item.label });
+          selection = selectionResponse?.result || {};
+        }
+      }
       if (selection.selectionAttempted !== true) throw new Error('Model selection control was not activated');
 
       const reattached = await networkMonitor.attach(tabId);
@@ -2178,6 +2222,16 @@ async function persistModelVerificationHistory(tabId, autoVerification) {
   return record;
 }
 
+async function autoDownloadVerificationLog() {
+  const bundle = await createDiagnosticBundle({ entryLimit: 2000 });
+  const json = JSON.stringify(bundle, null, 2);
+  const filename = 'ModelPro-v' + RUNTIME_CODE_VERSION + '-auto-' + new Date().toISOString().replace(/[:.]/g, '-') + '.log';
+  const url = 'data:application/json;charset=utf-8,' + encodeURIComponent(json);
+  const downloadId = await chrome.downloads.download({ url, filename, saveAs: false });
+  logRuntime('info', 'diagnostics', 'auto_verification_log_downloaded', { filename, downloadId, runtimeLogCount: bundle.runtimeLogs?.length ?? 0 });
+  return { filename, downloadId };
+}
+
 async function autoVerify(tabId) {
   if (!masterRuntimeEnabled()) throw new Error('GPTWork is disabled / GPTWork 已关闭');
   const tab = await chrome.tabs.get(tabId);
@@ -2346,6 +2400,12 @@ async function autoVerify(tabId) {
       evidenceSource: item.evidenceSource ?? null,
     })),
   });
+
+  try {
+    state.autoVerification.autoLogDownload = await autoDownloadVerificationLog();
+  } catch (error) {
+    logRuntime('error', 'diagnostics', 'auto_verification_log_download_failed', { tabId, error: errorText(error) });
+  }
 
   return {
     ready: catalogVerification.total > 0,
