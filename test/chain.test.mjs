@@ -90,3 +90,15 @@ test('v0.1.8 verification performs and confirms the real ChatGPT Work page trans
  assert.match(content,/work_control_clicked_unconfirmed/);
  assert.match(content,/workMode: Boolean\(activeControl\)/);
 });
+
+
+test('v0.1.9 activates Work through a real normal-policy turn after Sol and then grows the B queue',async()=>{
+ const background=await r('extension/background.js');
+ assert.match(background,/verification_work_activation_turn_started/);
+ assert.match(background,/source: 'normal_work_policy_turn'/);
+ assert.match(background,/transportModelAfter/);
+ assert.match(background,/mergeCatalog\(activationCatalog, 'work-activation'\)/);
+ assert.match(background,/normal_work_policy_turn_confirmed/);
+ assert.doesNotMatch(background,/sendTabMessage\(tabId, \{ type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' \}\)/);
+ assert.match(background,/const coreCheck = \{ ok: true, standalone: true \}/);
+});

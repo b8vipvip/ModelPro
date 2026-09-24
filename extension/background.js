@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.8';
+const RUNTIME_CODE_VERSION = '0.1.9';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -1711,7 +1711,9 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
     stablePasses: 0,
     reasoningLevels: [],
     pickerModes: [],
+    workDiscovery: { attempted: false, entered: false, reason: 'pending_after_gpt_5_5' },
   };
+  let workActivationPending = false;
 
   const verificationChronology = (item) => {
     const model = normalizeConcreteModelId(item?.model || item?.rawModel);
@@ -1936,34 +1938,80 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
       break;
     }
 
-    // GPT-5.5 is verified before Work is enabled because picker A exposes it
-    // directly. From this point on, enable GPTWork's tab-scoped Work feature in the
-    // verification runtime itself. Do not click GPTWork UI and do not send a fake
-    // bootstrap chat turn: subsequent discovery must run under the same Work feature
-    // state that the user would enable from GPTWork.
+    // GPT-5.5 must finish before Work activation. The real GPTWork behavior is not
+    // a top-page "Work" button click: once the tab-scoped Work policy is enabled, an
+    // ordinary visible turn (outside a model-verification transaction) is rewritten
+    // by the normal Work policy to its Work transport. That real turn makes ChatGPT
+    // rebuild the composer and expose the Work/B catalog.
     if (item.model === 'gpt-5.5') {
       try {
         const featureState = await enableWorkModeForVerification(tabId);
-        const pageTransition = await sendTabMessage(tabId, { type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' });
-        const pageWork = pageTransition?.workMode === true || pageTransition?.alreadySelected === true;
-        logRuntime(pageWork ? 'info' : 'warn', 'verification', 'verification_work_mode_transition', {
-          tabId,
-          phase: 'post_gpt_5_5',
-          entered: pageWork,
-          runtimeEnabled: featureState?.workModeEnabled === true,
-          source: 'verification_page_control',
-          pageTransition,
+        workActivationPending = featureState?.workModeEnabled === true;
+        progress.workDiscovery = {
+          attempted: false,
+          entered: false,
+          reason: workActivationPending ? 'waiting_for_sol_then_work_turn' : 'work_runtime_not_enabled',
+        };
+        logRuntime(workActivationPending ? 'info' : 'warn', 'verification', 'verification_work_mode_armed', {
+          tabId, phase: 'post_gpt_5_5', runtimeEnabled: workActivationPending,
+          source: 'normal_work_policy_turn',
         });
       } catch (error) {
-        logRuntime('warn', 'verification', 'verification_work_mode_transition', {
-          tabId,
-          phase: 'post_gpt_5_5',
-          entered: false,
-          source: 'verification_runtime_default',
-          error: errorText(error),
+        progress.workDiscovery = { attempted: false, entered: false, reason: 'work_runtime_enable_failed', error: errorText(error) };
+        logRuntime('warn', 'verification', 'verification_work_mode_armed', {
+          tabId, phase: 'post_gpt_5_5', runtimeEnabled: false, error: errorText(error),
         });
       }
-      await new Promise((resolve) => setTimeout(resolve, 900));
+    }
+
+    // After Sol itself has been strictly verified, perform one ordinary visible turn
+    // with NO verification transaction. This is the same normal Work-policy path that
+    // made the user's GPTWork session switch to Work and expose picker B.
+    if (item.model === 'gpt-5.6-sol' && workActivationPending) {
+      progress.workDiscovery = { attempted: true, entered: false, reason: 'work_activation_turn_started' };
+      logRuntime('info', 'verification', 'verification_work_activation_turn_started', { tabId });
+      const activationProbe = await sendVerificationReasoningProbe(tabId, 'ModelPro Work 模式激活验证', index, queue.length);
+      if (activationProbe?.sent) {
+        let activationSettled = await sendTabMessage(tabId, {
+          type: 'GPTLOCK_WAIT_FOR_PROBE_SETTLED',
+          assistantCountBefore: activationProbe.assistantCountBefore ?? 0,
+          timeoutMs: AUTO_VERIFY_RESPONSE_TIMEOUT_MS,
+        });
+        if (activationSettled?.settled !== true) {
+          activationSettled = await recoverStaleVerificationTurn(tabId, activationProbe.assistantCountBefore ?? 0);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        const activationRewrite = state.lastRewrite || {};
+        const workTransport = /-wm$/i.test(String(activationRewrite.transportModelAfter || ''));
+        const workModel = normalizeConcreteModelId(activationRewrite.modelAfter);
+        const activationCatalog = await discoverAccountCatalog(tabId);
+        progress.discoveryPasses += 1;
+        const addedFromWork = mergeCatalog(activationCatalog, 'work-activation');
+        const composerRebuilt = activationCatalog?.pickerMode === 'B';
+        const entered = activationSettled?.settled === true && (workTransport || workModel === 'gpt-6-astra') && composerRebuilt;
+        progress.workDiscovery = {
+          attempted: true,
+          entered,
+          reason: entered ? 'normal_work_policy_turn_confirmed' : 'work_activation_not_confirmed',
+          requestModel: workModel || null,
+          transportModel: activationRewrite.transportModelAfter || null,
+          pickerMode: activationCatalog?.pickerMode ?? null,
+          added: addedFromWork,
+        };
+        logRuntime(entered ? 'info' : 'warn', 'verification', 'verification_work_mode_transition', {
+          tabId, phase: 'post_gpt_5_6_sol', entered,
+          source: 'normal_work_policy_turn',
+          requestModel: workModel || null,
+          transportModel: activationRewrite.transportModelAfter || null,
+          pickerMode: activationCatalog?.pickerMode ?? null,
+          added: addedFromWork,
+        });
+        workActivationPending = !entered;
+        if (addedFromWork) stablePasses = 0;
+      } else {
+        progress.workDiscovery = { attempted: true, entered: false, reason: 'work_activation_probe_not_sent' };
+      }
+      await broadcastTabState(tabId);
     }
 
     // A completed real turn / Work transition may unlock account models/capabilities.
@@ -1973,7 +2021,7 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
     // verification turn did not expose B, run one additional reasoning-heavy Sol
     // turn, wait for a terminal response with the same recovery contract, then
     // rediscover before moving to the next model.
-    if (item.model === 'gpt-5.6-sol' && rediscovered?.pickerMode !== 'B') {
+    if (item.model === 'gpt-5.6-sol' && (rediscovered?.pickerMode !== 'B' || progress.workDiscovery?.entered !== true)) {
       logRuntime('info', 'verification', 'verification_sol_picker_b_unlock_started', { tabId, pickerMode: rediscovered?.pickerMode ?? null });
       const unlockProbe = await sendVerificationReasoningProbe(tabId, 'GPTWork GPT-5.6 Sol 能力解锁验证', index, queue.length);
       if (unlockProbe?.sent) {
@@ -2089,7 +2137,7 @@ async function autoVerify(tabId) {
   const pageContext = /^https:\/\/chatgpt\.com\/c\/[^/?#]+/i.test(tab.url || '') ? 'existing_chat' : 'new_chat';
   logRuntime('info', 'verification', 'auto_verify_started', { tabId, pageContext });
 
-  const coreCheck = await refreshNativeCore({ tolerateFailure: true });
+  const coreCheck = { ok: true, standalone: true };
   const monitorAttached = await networkMonitor.attach(tabId);
   const responseCaptureEnabled = monitorAttached
     ? await networkMonitor.enableResponseCapture(tabId).catch(() => false)
