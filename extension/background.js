@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.3';
+const RUNTIME_CODE_VERSION = '0.1.4';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -1321,7 +1321,7 @@ async function chatGptTabId(preferred = null) {
   return tabs[0]?.id ?? null;
 }
 
-function sendTabMessage(tabId, message) {
+function rawSendTabMessage(tabId, message) {
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tabId, message, (response) => {
       const error = chrome.runtime.lastError;
@@ -1330,6 +1330,32 @@ function sendTabMessage(tabId, message) {
       else resolve(response);
     });
   });
+}
+
+async function ensureStandaloneContentScript(tabId) {
+  try {
+    return await rawSendTabMessage(tabId, { type: 'GPTLOCK_COLLECT_PAGE_STATE' });
+  } catch (error) {
+    if (!/Receiving end does not exist|Could not establish connection/i.test(errorText(error))) throw error;
+    const tab = await chrome.tabs.get(tabId);
+    if (!isChatGptUrl(tab?.url || '')) throw error;
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['page-model-evidence.js', 'astra-model-evidence.js', 'content.js', 'model-catalog.js'],
+    });
+    logRuntime('info', 'extension', 'content_scripts_reinjected', { tabId, url: tab.url || null });
+    return rawSendTabMessage(tabId, { type: 'GPTLOCK_COLLECT_PAGE_STATE' });
+  }
+}
+
+async function sendTabMessage(tabId, message) {
+  try {
+    return await rawSendTabMessage(tabId, message);
+  } catch (error) {
+    if (!/Receiving end does not exist|Could not establish connection/i.test(errorText(error))) throw error;
+    await ensureStandaloneContentScript(tabId);
+    return rawSendTabMessage(tabId, message);
+  }
 }
 
 function getPlatformInfo() {

@@ -41,3 +41,12 @@ test('standalone runtime does not reconnect when native messaging API is unavail
   assert.match(background,/typeof chrome\.runtime\.connectNative !== 'function'/);
   assert.match(background,/Native messaging is not part of standalone ModelPro/);
 });
+
+
+test('standalone verification reinjects content scripts into pre-existing ChatGPT tabs',async()=>{
+ const manifest=JSON.parse(await r('extension/manifest.json')); const background=await r('extension/background.js');
+ assert.ok(manifest.permissions.includes('scripting'));
+ assert.match(background,/content_scripts_reinjected/);
+ assert.match(background,/chrome\.scripting\.executeScript/);
+ assert.match(background,/Receiving end does not exist/);
+});
