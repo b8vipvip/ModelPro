@@ -1,1 +1,1 @@
-{"name":"modelpro","version":"0.1.23","private":true,"type":"module","scripts":{"test":"node --test test/*.test.mjs"}}
+{"name":"modelpro","version":"0.1.24","private":true,"type":"module","scripts":{"test":"node --test test/*.test.mjs"}}

@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.23';
+const RUNTIME_CODE_VERSION = '0.1.24';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -60,6 +60,9 @@ const tabStates = new Map();
 // temporarily change request-lock behavior while a catalog model is being probed.
 // It is intentionally independent of URL/context state migration.
 const verificationTransactions = new Map();
+// One-shot Work bootstrap must mirror the successful GPTWork normal turn: rewrite
+// only the model transport and leave ChatGPT's own thinking_effort/body semantics intact.
+const workBootstrapTabs = new Set();
 const accountClient = createAccountClient();
 let accountState = { authenticated: false, authorized: false, allowedWindowKeys: [], deniedWindowKeys: [] };
 let sharedModelCatalogUnavailableUntil = 0;
@@ -955,9 +958,9 @@ const networkMonitor = new ChatGptNetworkMonitor({
     return {
       lockedModels: policy.lockedModels,
       allowedReasoningLevels: policy.allowedReasoningLevels,
-      preferredReasoning: currentSettings.preferredReasoning,
+      preferredReasoning: workBootstrapTabs.has(Number(tabId)) ? null : currentSettings.preferredReasoning,
       preserveModel: false,
-      preserveReasoning: false,
+      preserveReasoning: workBootstrapTabs.has(Number(tabId)),
       bypassRewrite: false,
       forceModel: null,
       responseVerificationEnabled: currentSettings.networkVerificationEnabled,
@@ -1997,14 +2000,20 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
           tabId, phase: 'post_gpt_5_6_sol', source: 'normal_work_policy_request',
         });
 
-        const activationProbe = await sendVerificationReasoningProbe(tabId, 'work-mode-bootstrap', index, queue.length);
+        let activationProbe = null;
         let activationSettled = null;
-        if (activationProbe?.sent) {
-          activationSettled = await sendTabMessage(tabId, {
-            type: 'GPTLOCK_WAIT_FOR_PROBE_SETTLED',
-            assistantCountBefore: activationProbe.assistantCountBefore ?? 0,
-            timeoutMs: AUTO_VERIFY_RESPONSE_TIMEOUT_MS,
-          });
+        workBootstrapTabs.add(Number(tabId));
+        try {
+          activationProbe = await sendVerificationReasoningProbe(tabId, 'work-mode-bootstrap', index, queue.length);
+          if (activationProbe?.sent) {
+            activationSettled = await sendTabMessage(tabId, {
+              type: 'GPTLOCK_WAIT_FOR_PROBE_SETTLED',
+              assistantCountBefore: activationProbe.assistantCountBefore ?? 0,
+              timeoutMs: AUTO_VERIFY_RESPONSE_TIMEOUT_MS,
+            });
+          }
+        } finally {
+          workBootstrapTabs.delete(Number(tabId));
         }
 
         // Do not reload/stop/recover this bootstrap turn. A failed product Work request
