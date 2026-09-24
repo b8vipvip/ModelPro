@@ -89,19 +89,19 @@ test('Work-control helper is the only automatic Work activation path',async()=>{
 });
 
 
-test('Work activation uses a real normal-policy request after Sol and then grows the B queue',async()=>{
+test('Work activation only uses the real ChatGPT Work UI after Sol is verified',async()=>{
  const background=await r('extension/background.js');
- assert.match(background,/verification_work_activation_turn_started/);
- assert.match(background,/source: 'normal_work_policy_turn'/);
- assert.match(background,/transportModelAfter/);
- assert.match(background,/mergeCatalog\(activationCatalog, 'work-activation'\)/);
- assert.match(background,/normal_work_policy_request_confirmed/);
- assert.doesNotMatch(background,/sendTabMessage\(tabId, \{ type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' \}\)/);
+ assert.match(background,/verification_work_ui_activation_started/);
+ assert.match(background,/source: 'chatgpt_work_ui_control'/);
+ assert.match(background,/mergeCatalog\(activationCatalog, 'work-ui-activation'\)/);
+ assert.match(background,/deferred_until_sol_verified/);
+ assert.match(background,/sendTabMessage\(tabId, \{ type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' \}\)/);
+ assert.doesNotMatch(background,/normal_work_policy_request_confirmed/);
  assert.match(background,/const coreCheck = \{ ok: true, standalone: true \}/);
 });
 
 
-test('v0.1.15 uses packaged random 100-prompt bank and safe Work activation',async()=>{
+test('v0.1.16 uses packaged random 100-prompt bank and safe Work activation',async()=>{
  const [background,content,bankText]=await Promise.all([r('extension/background.js'),r('extension/content.js'),r('extension/prompt-bank.json')]);
  const bank=JSON.parse(bankText);
  assert.equal(bank.prompts.length,100);
@@ -115,7 +115,7 @@ test('v0.1.15 uses packaged random 100-prompt bank and safe Work activation',asy
 });
 
 
-test('v0.1.15 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
+test('v0.1.16 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
  const [background,content]=await Promise.all([r('extension/background.js'),r('extension/content.js')]);
  assert.match(background,/probeText: prompt/);
  assert.doesNotMatch(background,/probeText: \`\\\$\\\{marker\\\}/);
@@ -125,7 +125,7 @@ test('v0.1.15 sends natural prompt text without verification prefixes and reacqu
  assert.doesNotMatch(background,/sendVerificationReasoningProbe\(tabId, 'ModelPro Work 模式激活验证'/);
 });
 
-test('v0.1.15 never fabricates a Work request by normal-policy model rewrite',async()=>{
+test('v0.1.16 never fabricates a Work request by normal-policy model rewrite',async()=>{
  const background=await r('extension/background.js');
  assert.match(background,/chatgpt_work_ui_control/);
  assert.match(background,/work_ui_control_not_available/);
