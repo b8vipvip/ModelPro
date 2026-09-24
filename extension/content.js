@@ -193,8 +193,12 @@
     const callbackMaxMs = lifecycle?.callbacks
       ? Math.max(0, ...Object.values(lifecycle.callbacks).map((item) => Number(item?.maxMs || 0)))
       : 0;
+    // Long Task API entries cover the whole ChatGPT main thread, so they are useful
+    // page-jank evidence but are not proof that ModelPro itself caused the stall.
+    // Warning severity is reserved for user-visible timer lag or extension-owned
+    // mutation/runtime callbacks crossing their budgets.
+    const pageLongTaskObserved = performanceTelemetry.maxLongTaskMs >= 100;
     const abnormal = lag >= 120
-      || performanceTelemetry.maxLongTaskMs >= 100
       || performanceTelemetry.maxMutationCallbackMs >= 40
       || performanceTelemetry.mutationCount >= 5000
       || callbackMaxMs >= 40;
@@ -208,6 +212,7 @@
     const details = {
       eventLoopLagMs: Math.round(lag),
       maxLongTaskMs: Math.round(performanceTelemetry.maxLongTaskMs),
+      pageLongTaskObserved,
       longTaskCount: performanceTelemetry.longTaskCount,
       recentLongTasks: performanceTelemetry.recentLongTasks.slice(-8),
       mutationCount: performanceTelemetry.mutationCount,
