@@ -101,15 +101,33 @@ test('Work activation uses a real normal-policy request after Sol and then grows
 });
 
 
-test('v0.1.12 uses packaged random 100-prompt bank and bounded Work activation',async()=>{
+test('v0.1.13 uses packaged random 100-prompt bank and safe Work activation',async()=>{
  const [background,content,bankText]=await Promise.all([r('extension/background.js'),r('extension/content.js'),r('extension/prompt-bank.json')]);
  const bank=JSON.parse(bankText);
  assert.equal(bank.prompts.length,100);
  assert.match(background,/chrome\.runtime\.getURL\('prompt-bank\.json'\)/);
  assert.match(background,/crypto\.getRandomValues/);
  assert.match(background,/const AUTO_VERIFY_RESPONSE_TIMEOUT_MS = 45000/);
- assert.match(background,/const rewriteDeadline = Date\.now\(\) \+ 15000/);
- assert.doesNotMatch(background,/activationSettled\?\.settled === true/);
+ assert.match(background,/GPTLOCK_VERIFY_ENTER_WORK_MODE/);
+ assert.match(background,/deferred_until_sol_verified/);
  assert.match(content,/连接已中断/);
  assert.match(content,/interrupted: true/);
+});
+
+
+test('v0.1.13 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
+ const [background,content]=await Promise.all([r('extension/background.js'),r('extension/content.js')]);
+ assert.match(background,/probeText: prompt/);
+ assert.doesNotMatch(background,/probeText: \`\\\$\\\{marker\\\}/);
+ assert.match(content,/composerText\(composer\)\.trim\(\) === probeText/);
+ assert.match(content,/verification_model_row_reacquired/);
+ assert.match(content,/verification-model-row-reacquired/);
+ assert.doesNotMatch(background,/sendVerificationReasoningProbe\(tabId, 'ModelPro Work 模式激活验证'/);
+});
+
+test('v0.1.13 never fabricates a Work request by normal-policy model rewrite',async()=>{
+ const background=await r('extension/background.js');
+ assert.match(background,/chatgpt_work_ui_control/);
+ assert.match(background,/work_ui_control_not_available/);
+ assert.doesNotMatch(background,/normal_work_policy_request_confirmed/);
 });

@@ -1401,7 +1401,29 @@ document.addEventListener('pointerdown', (event) => {
         });
         return { attempted: true, observation };
       }
-      const attempted = await modelPickerPointer(candidate, 'click', 'verification-model-row');
+      let activeCandidate = candidate;
+      let attempted = await modelPickerPointer(activeCandidate, 'click', 'verification-model-row');
+      if (!attempted) {
+        // Picker B animates/reparents its advanced model rows. A row can still report
+        // a visible rect while hit-testing no longer owns that point. Re-open the same
+        // owned picker and reacquire the exact semantic row once instead of retrying
+        // the stale node three times.
+        await closeModelMenus(modern.trigger);
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        const retryMenu = await openModernModelMenu();
+        activeCandidate = retryMenu.rows.find((row) => {
+          const descriptor = rowModelDescriptor(row);
+          if (desired && (descriptor.model === desired || descriptor.rawId === desired)) return true;
+          if (wantedKey && String(descriptor.selectorKey || '').toLowerCase() === wantedKey) return true;
+          return Boolean(wantedLabel && String(descriptor.label || '').toLowerCase().replace(/\s+/g, ' ') === wantedLabel);
+        }) || null;
+        pointerTrace('verification_model_row_reacquired', {
+          desired, selectorKey: wantedKey, label: wantedLabel, reacquired: Boolean(activeCandidate),
+        });
+        attempted = activeCandidate
+          ? await modelPickerPointer(activeCandidate, 'click', 'verification-model-row-reacquired')
+          : false;
+      }
       if (!attempted) return { attempted: false, observation: collectObservation() };
       // Never keep using the pre-click row as a liveness authority. Radix replaces or
       // collapses picker nodes during the transition; after the mandatory settle delay,
@@ -1415,7 +1437,7 @@ document.addEventListener('pointerdown', (event) => {
             // after a successful row click and leave only the reasoning control visible.
             // The exact owned catalog row's radio state is therefore the primary UI
             // acknowledgement; Composer model text remains a secondary read-only signal.
-            if (candidate.isConnected && candidate.getAttribute('data-state') === 'checked') return true;
+            if (activeCandidate?.isConnected && activeCandidate.getAttribute('data-state') === 'checked') return true;
             return collectObservation().model === desired;
           }, 3500, 100)
         : await waitUntil(() => !visible(candidate) || !visibleIntelligencePickerContent(), 1800, 100);
@@ -1741,7 +1763,7 @@ document.addEventListener('pointerdown', (event) => {
         : 'GPTWork 自动验证';
 
       setComposerText(composer, probeText);
-      const filled = await waitUntil(() => composerText(composer).includes(probeMarker), 2500, 80);
+      const filled = await waitUntil(() => composerText(composer).trim() === probeText, 2500, 80);
       if (!filled) throw new Error('Failed to write visible test message / 无法写入可见测试消息');
 
       const sendButton = await waitUntil(findSendButton, 5000, 100);
@@ -1754,7 +1776,7 @@ document.addEventListener('pointerdown', (event) => {
       const sent = await waitUntil(() => {
         const currentComposer = findComposer();
         const current = composerText(currentComposer);
-        return !current.includes(probeMarker) || Boolean(visibleGeneratingControl());
+        return current.trim() !== probeText || Boolean(visibleGeneratingControl());
       }, 5000, 100);
       if (!sent) {
         if (draftPreserved) setComposerText(composer, originalDraft);
