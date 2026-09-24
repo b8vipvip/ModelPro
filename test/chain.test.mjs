@@ -101,7 +101,7 @@ test('Work activation only uses the real ChatGPT Work UI after Sol is verified',
 });
 
 
-test('v0.1.16 uses packaged random 100-prompt bank and safe Work activation',async()=>{
+test('v0.1.17 uses packaged random 100-prompt bank and safe Work activation',async()=>{
  const [background,content,bankText]=await Promise.all([r('extension/background.js'),r('extension/content.js'),r('extension/prompt-bank.json')]);
  const bank=JSON.parse(bankText);
  assert.equal(bank.prompts.length,100);
@@ -115,7 +115,7 @@ test('v0.1.16 uses packaged random 100-prompt bank and safe Work activation',asy
 });
 
 
-test('v0.1.16 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
+test('v0.1.17 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
  const [background,content]=await Promise.all([r('extension/background.js'),r('extension/content.js')]);
  assert.match(background,/probeText: prompt/);
  assert.doesNotMatch(background,/probeText: \`\\\$\\\{marker\\\}/);
@@ -125,9 +125,18 @@ test('v0.1.16 sends natural prompt text without verification prefixes and reacqu
  assert.doesNotMatch(background,/sendVerificationReasoningProbe\(tabId, 'ModelPro Work 模式激活验证'/);
 });
 
-test('v0.1.16 never fabricates a Work request by normal-policy model rewrite',async()=>{
+test('v0.1.17 never fabricates a Work request by normal-policy model rewrite',async()=>{
  const background=await r('extension/background.js');
  assert.match(background,/chatgpt_work_ui_control/);
  assert.match(background,/work_ui_control_not_available/);
  assert.doesNotMatch(background,/normal_work_policy_request_confirmed/);
+});
+
+
+test('v0.1.17 never sends or reload-recovers an extra Sol unlock turn',async()=>{
+ const background=await r('extension/background.js');
+ assert.doesNotMatch(background,/verification_sol_picker_b_unlock_started/);
+ assert.doesNotMatch(background,/GPTWork GPT-5\.6 Sol 能力解锁验证/);
+ assert.doesNotMatch(background,/const unlockProbe = await sendVerificationReasoningProbe/);
+ assert.match(background,/const rediscovered = await discoverAccountCatalog\(tabId\)/);
 });

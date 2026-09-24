@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.16';
+const RUNTIME_CODE_VERSION = '0.1.17';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -2024,32 +2024,14 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
       await broadcastTabState(tabId);
     }
 
-    // A completed real turn / Work transition may unlock account models/capabilities.
-    let rediscovered = await discoverAccountCatalog(tabId);
+    // A completed verified turn is already sufficient to rediscover the catalog.
+    // Never send an extra "unlock" turn after Sol. v0.1.16 showed that this extra
+    // turn runs outside verificationTransactions, so the copied GPTWork normal
+    // policy rewrites an exact Sol request into gpt-6-astra-wm. The recovery path
+    // then reloads the page while that turn is generating, which is the direct
+    // source of ChatGPT's "连接已中断。正在等待完整回复" state.
+    const rediscovered = await discoverAccountCatalog(tabId);
     progress.discoveryPasses += 1;
-    // GPT-5.6 Sol can be the capability-unlock turn for picker B. If the normal
-    // verification turn did not expose B, run one additional reasoning-heavy Sol
-    // turn, wait for a terminal response with the same recovery contract, then
-    // rediscover before moving to the next model.
-    if (item.model === 'gpt-5.6-sol' && (rediscovered?.pickerMode !== 'B' || progress.workDiscovery?.entered !== true)) {
-      logRuntime('info', 'verification', 'verification_sol_picker_b_unlock_started', { tabId, pickerMode: rediscovered?.pickerMode ?? null });
-      const unlockProbe = await sendVerificationReasoningProbe(tabId, 'GPTWork GPT-5.6 Sol 能力解锁验证', index, queue.length);
-      if (unlockProbe?.sent) {
-        let unlockSettled = await sendTabMessage(tabId, {
-          type: 'GPTLOCK_WAIT_FOR_PROBE_SETTLED',
-          assistantCountBefore: unlockProbe.assistantCountBefore ?? 0,
-          timeoutMs: AUTO_VERIFY_RESPONSE_TIMEOUT_MS,
-        });
-        if (unlockSettled?.settled !== true) {
-          unlockSettled = await recoverStaleVerificationTurn(tabId, unlockProbe.assistantCountBefore ?? 0);
-        }
-        if (unlockSettled?.settled === true) {
-          rediscovered = await discoverAccountCatalog(tabId);
-          progress.discoveryPasses += 1;
-          logRuntime('info', 'verification', 'verification_sol_picker_b_unlock_completed', { tabId, pickerMode: rediscovered?.pickerMode ?? null });
-        }
-      }
-    }
     const added = mergeCatalog(rediscovered, 'post-turn');
     stablePasses = added ? 0 : stablePasses + 1;
     progress.stablePasses = stablePasses;
