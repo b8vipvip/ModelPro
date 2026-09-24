@@ -99,3 +99,17 @@ test('v0.1.9 activates Work through a real normal-policy turn after Sol and then
  assert.doesNotMatch(background,/sendTabMessage\(tabId, \{ type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' \}\)/);
  assert.match(background,/const coreCheck = \{ ok: true, standalone: true \}/);
 });
+
+
+test('v0.1.11 uses packaged random 100-prompt bank and bounded Work activation',async()=>{
+ const [background,content,bankText]=await Promise.all([r('extension/background.js'),r('extension/content.js'),r('extension/prompt-bank.json')]);
+ const bank=JSON.parse(bankText);
+ assert.equal(bank.prompts.length,100);
+ assert.match(background,/chrome\.runtime\.getURL\('prompt-bank\.json'\)/);
+ assert.match(background,/crypto\.getRandomValues/);
+ assert.match(background,/const AUTO_VERIFY_RESPONSE_TIMEOUT_MS = 45000/);
+ assert.match(background,/const rewriteDeadline = Date\.now\(\) \+ 15000/);
+ assert.doesNotMatch(background,/activationSettled\?\.settled === true/);
+ assert.match(content,/连接已中断/);
+ assert.match(content,/interrupted: true/);
+});

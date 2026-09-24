@@ -1692,6 +1692,11 @@ document.addEventListener('pointerdown', (event) => {
     while (Date.now() < deadline) {
       const generating = Boolean(visibleGeneratingControl());
       const messages = assistantMessages();
+      const pageText = String(document.body?.innerText || '');
+      const interrupted = /连接已中断|等待完整回复|connection interrupted|waiting for (?:a )?complete response/i.test(pageText);
+      if (interrupted) {
+        return { settled: false, interrupted: true, stillGenerating: generating, assistantCount: messages.length };
+      }
       if (generating || messages.length > before) sawActivity = true;
       if (!sawActivity || generating) {
         idleSince = 0;

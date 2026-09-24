@@ -31,11 +31,11 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.10';
+const RUNTIME_CODE_VERSION = '0.1.11';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
-const AUTO_VERIFY_RESPONSE_TIMEOUT_MS = 120000;
+const AUTO_VERIFY_RESPONSE_TIMEOUT_MS = 45000;
 const AUTO_VERIFY_POLL_MS = 200;
 const AUTO_VERIFY_HANDOFF_MIN_WAIT_MS = 9000;
 const AUTO_VERIFY_HANDOFF_IDLE_MS = 1200;
@@ -1663,19 +1663,33 @@ async function recoverStaleVerificationTurn(tabId, assistantCountBefore) {
   return { settled: Boolean(ok), method: 'stop-button', stopped: stopped?.stopped === true };
 }
 
+let verificationPromptBankCache = null;
+
+async function loadVerificationPromptBank() {
+  if (verificationPromptBankCache) return verificationPromptBankCache;
+  const response = await fetch(chrome.runtime.getURL('prompt-bank.json'));
+  if (!response.ok) throw new Error(`Prompt bank load failed: ${response.status}`);
+  const parsed = await response.json();
+  const prompts = Array.isArray(parsed) ? parsed : parsed?.prompts;
+  if (!Array.isArray(prompts) || prompts.length < 100) throw new Error('Prompt bank must contain at least 100 prompts');
+  verificationPromptBankCache = prompts.map((item) => String(item || '').trim()).filter(Boolean);
+  return verificationPromptBankCache;
+}
+
+async function randomVerificationPrompt() {
+  const bank = await loadVerificationPromptBank();
+  const bytes = new Uint32Array(1);
+  crypto.getRandomValues(bytes);
+  return bank[bytes[0] % bank.length];
+}
+
 async function sendVerificationReasoningProbe(tabId, marker, ordinal, total) {
-  // Every model gets a different deterministic arithmetic turn. Reusing the same
-  // puzzle made all answers identical, which obscured whether the UI had actually
-  // advanced to a new model/turn. The result is strictly increasing with ordinal.
-  const n = Math.max(1, Number(ordinal) || 1);
-  const left = 120 + (n * 7);
-  const right = 31 + (n * 5);
-  const offset = (n * n) + 17;
+  const prompt = await randomVerificationPrompt();
   return sendTabMessage(tabId, {
     type: 'GPTLOCK_AUTO_SEND_PROBE',
     skipAlignment: true,
     probeMarker: marker,
-    probeText: `${marker} ${ordinal}/${total}：计算 (${left}×${right})+${offset}，只输出“校验值=<整数>”，不要解释、不要复述题目。`,
+    probeText: `${marker} ${ordinal}/${total}：${prompt}`,
   });
 }
 
@@ -1954,7 +1968,7 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
         };
         logRuntime(workActivationPending ? 'info' : 'warn', 'verification', 'verification_work_mode_armed', {
           tabId, phase: 'post_gpt_5_5', runtimeEnabled: workActivationPending,
-          source: 'normal_work_policy_turn',
+          source: 'normal_work_policy_request',
         });
       } catch (error) {
         progress.workDiscovery = { attempted: false, entered: false, reason: 'work_runtime_enable_failed', error: errorText(error) };
@@ -1972,27 +1986,31 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
       logRuntime('info', 'verification', 'verification_work_activation_turn_started', { tabId });
       const activationProbe = await sendVerificationReasoningProbe(tabId, 'ModelPro Work 模式激活验证', index, queue.length);
       if (activationProbe?.sent) {
-        let activationSettled = await sendTabMessage(tabId, {
-          type: 'GPTLOCK_WAIT_FOR_PROBE_SETTLED',
-          assistantCountBefore: activationProbe.assistantCountBefore ?? 0,
-          timeoutMs: AUTO_VERIFY_RESPONSE_TIMEOUT_MS,
-        });
-        if (activationSettled?.settled !== true) {
-          activationSettled = await recoverStaleVerificationTurn(tabId, activationProbe.assistantCountBefore ?? 0);
+        // Work activation is a capability transition, not a model-verification turn.
+        // Do not block for a full assistant answer: the request rewrite is the authority
+        // that the normal Work policy fired. Waiting 120s here caused the observed
+        // "连接已中断" stall and then recovery could reload the page mid-test.
+        const rewriteDeadline = Date.now() + 15000;
+        let activationRewrite = state.lastRewrite || {};
+        while (Date.now() < rewriteDeadline) {
+          activationRewrite = state.lastRewrite || {};
+          if (activationRewrite.authorityKind === 'normal-policy'
+            && (/-wm$/i.test(String(activationRewrite.transportModelAfter || ''))
+              || normalizeConcreteModelId(activationRewrite.modelAfter) === 'gpt-6-astra')) break;
+          await new Promise((resolve) => setTimeout(resolve, 200));
         }
-        await new Promise((resolve) => setTimeout(resolve, 900));
-        const activationRewrite = state.lastRewrite || {};
+        await new Promise((resolve) => setTimeout(resolve, 1200));
         const workTransport = /-wm$/i.test(String(activationRewrite.transportModelAfter || ''));
         const workModel = normalizeConcreteModelId(activationRewrite.modelAfter);
         const activationCatalog = await discoverAccountCatalog(tabId);
         progress.discoveryPasses += 1;
         const addedFromWork = mergeCatalog(activationCatalog, 'work-activation');
         const composerRebuilt = activationCatalog?.pickerMode === 'B';
-        const entered = activationSettled?.settled === true && (workTransport || workModel === 'gpt-6-astra') && composerRebuilt;
+        const entered = (workTransport || workModel === 'gpt-6-astra') && composerRebuilt;
         progress.workDiscovery = {
           attempted: true,
           entered,
-          reason: entered ? 'normal_work_policy_turn_confirmed' : 'work_activation_not_confirmed',
+          reason: entered ? 'normal_work_policy_request_confirmed' : 'work_activation_not_confirmed',
           requestModel: workModel || null,
           transportModel: activationRewrite.transportModelAfter || null,
           pickerMode: activationCatalog?.pickerMode ?? null,
