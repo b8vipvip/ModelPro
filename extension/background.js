@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.6';
+const RUNTIME_CODE_VERSION = '0.1.7';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -200,20 +200,10 @@ async function applyJankIsolationMode(mode = 'normal', {
 }
 
 let runtimeLogFlushTimer = null;
-function scheduleRuntimeLogDelivery() {
-  if (runtimeLogFlushTimer !== null) return;
-  runtimeLogFlushTimer = setTimeout(() => {
-    runtimeLogFlushTimer = null;
-    // Browser storage is the canonical log. Native-file and server copies are delivery
-    // sinks only; both consume the same immutable entry ids and acknowledge independently.
-    void syncRuntimeLogsToNative().catch(() => {});
-  }, 750);
-}
+function scheduleRuntimeLogDelivery() {}
 
 function logRuntime(level, component, event, details = {}) {
-  void appendRuntimeLog(level, component, event, details)
-    .then(() => scheduleRuntimeLogDelivery())
-    .catch(() => {});
+  void appendRuntimeLog(level, component, event, details).catch(() => {});
 }
 
 async function startAutoVerificationStreamCapture(tabId, startedAt) {
@@ -1269,7 +1259,7 @@ async function performInitialize() {
     });
     return;
   }
-  await refreshNativeCore({ tolerateFailure: true });
+  await markNativeStopped();
   await refreshAccountHeartbeat({ reconfigure: false });
   await configureOpenTabs();
   chrome.alarms.create(ACCOUNT_REFRESH_ALARM, { periodInMinutes: 1 });
@@ -2320,18 +2310,11 @@ function diagnosticExportLimit(value) {
 async function createDiagnosticBundle({ entryLimit = 300 } = {}) {
   const limit = diagnosticExportLimit(entryLimit);
   const [stored, allRuntimeLogs, platform] = await Promise.all([
-    chrome.storage.local.get(['nativeStatus', DIAGNOSTIC_SSE_STORAGE_KEY]),
+    chrome.storage.local.get([DIAGNOSTIC_SSE_STORAGE_KEY]),
     getRuntimeLogs(),
     getPlatformInfo(),
   ]);
   const runtimeLogs = allRuntimeLogs.slice(-limit);
-  let nativeDiagnostics = null;
-  let nativeDiagnosticsError = null;
-  try {
-    nativeDiagnostics = await sendNative('get_diagnostics', { auditLimit: limit });
-  } catch (error) {
-    nativeDiagnosticsError = errorText(error);
-  }
   const rawStreamCapture = stored[DIAGNOSTIC_SSE_STORAGE_KEY] ?? null;
   const safeBundle = sanitizeLogValue({
     schemaVersion: 5,
@@ -2348,11 +2331,8 @@ async function createDiagnosticBundle({ entryLimit = 300 } = {}) {
     },
     policy: currentPolicy,
     settings: currentSettings,
-    nativeStatus: stored.nativeStatus ?? { connected: false },
     tabs: [...tabStates.values()].map(diagnosticTabState),
     runtimeLogs,
-    nativeDiagnostics,
-    nativeDiagnosticsError,
   });
   return {
     ...safeBundle,
@@ -2389,9 +2369,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       return chrome.alarms.clear(ACCOUNT_REFRESH_ALARM);
     });
   }
-  if (alarm.name === RUNTIME_LOG_UPLOAD_ALARM) {
-    void syncRuntimeLogsToNative().catch(() => {});
-  }
 });
 
 // Keep native window lifecycle listeners registered at all times, but do not turn a
@@ -2420,11 +2397,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 function applyConfigurationChange({ policyChanged = false, settingsChanged = false, localEnabledChanged = false } = {}) {
-  if (policyChanged && masterRuntimeEnabled()) {
-    void syncPolicy().catch(async (error) => {
-      await writeNativeStatus({ connected: false, lastError: errorText(error) });
-    });
-  }
   if (!policyChanged && !settingsChanged && !localEnabledChanged) return;
   logRuntime('info', 'settings', 'configuration_changed', {
     policyChanged,
@@ -2801,8 +2773,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const bundle = await createDiagnosticBundle({ entryLimit: message.entryLimit });
         logRuntime('info', 'diagnostics', 'bundle_created', {
           runtimeLogCount: bundle.runtimeLogs?.length ?? 0,
-          nativeAuditCount: bundle.nativeDiagnostics?.auditRecords?.length ?? 0,
-          nativeDiagnosticsError: bundle.nativeDiagnosticsError,
           rawStreamEntryCount: bundle.autoVerificationStream?.entries?.length ?? 0,
           rawStreamIncludedBytes: bundle.autoVerificationStream?.includedBytes ?? 0,
           rawStreamOverflowed: Boolean(bundle.autoVerificationStream?.overflowed),

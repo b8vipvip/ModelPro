@@ -69,3 +69,13 @@ test('v0.1.6 verifies response evidence locally without GPTWork native host',asy
  assert.doesNotMatch(background,/async function verifyObservation[\\s\\S]{0,300}sendNative\('verify'/);
  assert.match(background,/absent reasoning is incomplete metadata, not a reason to discard concrete/);
 });
+
+
+test('v0.1.7 standalone active paths omit Native Host residue',async()=>{
+ const background=await r('extension/background.js');
+ const init=background.slice(background.indexOf('async function performInitialize'),background.indexOf('function initialize()',background.indexOf('async function performInitialize')));
+ const diag=background.slice(background.indexOf('async function createDiagnosticBundle'),background.indexOf('chrome.runtime.onMessage'));
+ assert.doesNotMatch(init,/refreshNativeCore/);
+ assert.doesNotMatch(diag,/sendNative|nativeDiagnostics|nativeStatus/);
+ assert.doesNotMatch(background,/nativeAuditCount: bundle\.nativeDiagnostics/);
+});
