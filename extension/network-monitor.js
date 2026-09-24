@@ -95,6 +95,7 @@ export function hasCompleteResponseEvidence(evidence) {
 export function hasResponseMetadataEvidence(evidence) {
   return Boolean(
     evidence?.model
+      || evidence?.defaultModel
       || evidence?.reasoning
       || evidence?.conflicts?.model
       || evidence?.conflicts?.reasoning,
@@ -888,6 +889,8 @@ export class ChatGptNetworkMonitor {
       capturedAt: new Date().toISOString(),
       status: record.status,
       model: evidence.model,
+      defaultModel: evidence.defaultModel,
+      defaultModelField: evidence.defaultModelField,
       reasoning: evidence.reasoning,
       conflicts: evidence.conflicts,
       fields: evidence.fields,
@@ -999,6 +1002,8 @@ export class ChatGptNetworkMonitor {
       capturedAt: new Date().toISOString(),
       status: 101,
       model: evidence.model,
+      defaultModel: evidence.defaultModel,
+      defaultModelField: evidence.defaultModelField,
       reasoning: evidence.reasoning,
       conflicts: evidence.conflicts,
       fields: evidence.fields,
