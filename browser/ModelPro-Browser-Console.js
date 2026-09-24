@@ -1,5 +1,5 @@
 /*
- ModelPro Browser Console Verifier v0.4.0
+ ModelPro Browser Console Verifier v0.4.1
  Paste this entire file into Chrome DevTools Console on https://chatgpt.com/
  It uses conversation-driven discovery when the home page has no visible model picker,
  validates the visible answer, and automatically downloads a JSON report.
@@ -11,11 +11,25 @@
 */
 (async () => {
   'use strict';
-  const VERSION='0.4.0-browser', MARKER='ModelPro 浏览器验证';
+  const VERSION='0.4.1-browser', MARKER='ModelPro 浏览器验证';
   const WAIT=ms=>new Promise(r=>setTimeout(r,ms));
   const now=()=>new Date().toISOString();
   const norm=s=>String(s??'').replace(/\s+/g,' ').trim();
   const logs=[], diagnostics=[];
+  let emergencyLogTimer=null, lastExportSignature='';
+  function exportLog(reason='checkpoint'){
+    try{
+      const stamp=new Date().toISOString().replace(/[:.]/g,'-');
+      const sig=reason+'|'+logs.length+'|'+diagnostics.length+'|'+report.results.length;
+      if(sig===lastExportSignature)return;
+      lastExportSignature=sig;
+      downloadText(buildLogText(),'ModelPro-Browser-'+VERSION+'-'+reason+'-'+stamp+'.log');
+    }catch(e){ console.error('[ModelPro] log export failed',e); }
+  }
+  function armEmergencyExport(){
+    if(emergencyLogTimer)clearInterval(emergencyLogTimer);
+    emergencyLogTimer=setInterval(()=>exportLog('checkpoint'),15000);
+  }
   const report={
     type:'modelpro-browser-console-report',schemaVersion:1,version:VERSION,
     versionInfo:{name:'ModelPro Browser Console Verifier',version:VERSION,reportSchemaVersion:1},
@@ -188,8 +202,13 @@
     log('info','bootstrap_probe_prepared',{prompt,expectedValue:p.expectedValue,beforeUrl,beforeAssist});
     await sendPrompt(prompt);
     diagnostic('bootstrap_probe_sent','info',{urlImmediatelyAfter:location.href,composer:composerSnapshot()});
-    await waitConversationTransition(beforeUrl,beforeAssist);
-    const ans=await waitAnswer(p.expectedValue,beforeAssist,60000);
+    const transition=await waitConversationTransition(beforeUrl,beforeAssist);
+    // A SPA navigation can replace the original assistant node. Re-baseline against the
+    // post-navigation conversation and bind to the latest visible assistant turn if present.
+    const afterTransitionBlocks=assistantBlocks();
+    const answerBaseline=Math.max(0,Math.min(beforeAssist,afterTransitionBlocks.length-1));
+    diagnostic('bootstrap_answer_binding','info',{beforeAssist,afterTransitionCount:afterTransitionBlocks.length,answerBaseline,transition});
+    const ans=await waitAnswer(p.expectedValue,answerBaseline,60000);
     report.bootstrap={probe:p,answer:ans.answer,answerExcerpt:ans.text,probeAnswerConfirmed:ans.ok,timedOut:ans.timedOut===true,urlAfter:location.href};
     log(ans.ok?'info':'warn','bootstrap_probe_result',report.bootstrap);
     await WAIT(500);
@@ -269,9 +288,10 @@
         (report.discoveredModels.length>0&&report.results.length===report.discoveredModels.length&&report.results.every(x=>x.probeAnswerConfirmed)?'browser_probe_pass':'browser_probe_incomplete')};
     log('info','verification_finished',report.summary);
     const stamp=new Date().toISOString().replace(/[:.]/g,'-');
-    downloadText(buildLogText(),'ModelPro-Browser-'+VERSION+'-'+stamp+'.log'); if(statusEl){
+    if(emergencyLogTimer){clearInterval(emergencyLogTimer);emergencyLogTimer=null;}
+    exportLog(reason); if(statusEl){
       const err=report.fatalError?'\n错误：'+String(report.fatalError).split('\n')[0].replace(/^Error:\s*/,''):'';
-      statusEl.textContent+='\n\n'+(reason==='fatal_error'?'测试报错':'完成')+'：'+report.summary.outcome+err+'\nJSON 已自动下载';
+      statusEl.textContent+='\n\n'+(reason==='fatal_error'?'测试报错':'完成')+'：'+report.summary.outcome+err+'\nLOG 已自动下载';
     } window.__MODELPRO_REPORT__=report;
   }
   try{
@@ -279,7 +299,9 @@
     window.__MODELPRO_STOP__=true;
     document.querySelectorAll('#modelpro-browser-panel').forEach(el=>el.remove());
     await WAIT(150);
-    window.__MODELPRO_STOP__=false; makePanel();
+    window.__MODELPRO_STOP__=false; makePanel(); armEmergencyExport();
+    window.addEventListener('pagehide',()=>exportLog('pagehide'),{once:true});
+    window.addEventListener('beforeunload',()=>exportLog('beforeunload'),{once:true});
     console.log('%cModelPro '+VERSION,'font-size:18px;font-weight:bold;color:#16a34a');
     log('info','verification_started',{version:VERSION,safety:'sidebar-excluded'});
     captureUiDiagnostic('startup_ui_snapshot');
