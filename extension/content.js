@@ -1249,20 +1249,36 @@ document.addEventListener('pointerdown', (event) => {
     // Single ownership chain: the final model list does not exist for GPTWork until
     // this exact second-layer row is activated. No pre-existing/global menu can win.
     const beforeScopes = new Set(modelPopupScopes());
-    const opened = await modelPickerPointer(opener, 'click', 'model-picker-submenu');
-    if (!opened) return { trigger, picker, opener, submenu: null, rows: [] };
+    let activeOpener = opener;
+    let opened = await modelPickerPointer(activeOpener, 'click', 'model-picker-submenu');
+    if (!opened) {
+      // The debugger infobar / slider animation can replace the semantic "Select model"
+      // row between discovery and the trusted-pointer readiness barrier. The catalog
+      // already proved this exact owned picker topology, so reacquire ONLY the same
+      // semantic opener inside the same picker and retry once. Never fall back to a
+      // global menu or coordinates.
+      activeOpener = modelSubmenuOpener(picker);
+      pickerTopologyProbe('second-layer-reacquired', {
+        previousOpener: compactElementProbe(opener),
+        opener: compactElementProbe(activeOpener),
+      });
+      if (activeOpener && activeOpener !== opener) {
+        opened = await modelPickerPointer(activeOpener, 'click', 'model-picker-submenu-reacquired');
+      }
+    }
+    if (!opened) return { trigger, picker, opener: activeOpener || opener, submenu: null, rows: [] };
     const submenu = await waitUntil(
-      () => visibleModelSubmenu(picker, opener, beforeScopes),
+      () => visibleModelSubmenu(picker, activeOpener, beforeScopes),
       2400,
       80,
     );
     const rows = submenu ? distinctModelRows(submenu) : [];
     pickerTopologyProbe('third-layer-ready', {
-      opener: compactElementProbe(opener),
+      opener: compactElementProbe(activeOpener),
       submenu: compactElementProbe(submenu),
       modelRows: rows.map((row) => ({ element: compactElementProbe(row), descriptor: rowModelDescriptor(row) })),
     });
-    return { trigger, picker, opener, submenu, rows, pageContext, pickerMode: 'B' };
+    return { trigger, picker, opener: activeOpener, submenu, rows, pageContext, pickerMode: 'B' };
   }
 
   function rowModelDescriptor(row) {
