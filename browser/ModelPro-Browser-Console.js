@@ -1,5 +1,5 @@
 /*
- ModelPro Browser Console Verifier v0.3.5
+ ModelPro Browser Console Verifier v0.3.6
  Paste this entire file into Chrome DevTools Console on https://chatgpt.com/
  It discovers visible model choices, selects each model, sends deterministic probes,
  validates the visible answer, and automatically downloads a JSON report.
@@ -11,7 +11,7 @@
 */
 (async () => {
   'use strict';
-  const VERSION='0.3.5-browser', MARKER='ModelPro 浏览器验证';
+  const VERSION='0.3.6-browser', MARKER='ModelPro 浏览器验证';
   const WAIT=ms=>new Promise(r=>setTimeout(r,ms));
   const now=()=>new Date().toISOString();
   const norm=s=>String(s??'').replace(/\s+/g,' ').trim();
@@ -117,6 +117,11 @@
         !/share|共享|send|发送|new chat|新聊天/i.test(s);
     });
     all.push(...topCenter.filter(x=>!all.includes(x)));
+    // ChatGPT's current home UI exposes Chat/Work as role=radio buttons.
+    // Treat the Chat radio as the safe entry point for model discovery.
+    const modeRadios=[...document.querySelectorAll('button[role="radio"],[role="radio"]')]
+      .filter(visible).filter(el=>!inSidebar(el)).filter(el=>/^(聊天|chat)$/i.test(textOf(el)));
+    all.push(...modeRadios.filter(x=>!all.includes(x)));
     return all.filter(el=>{
       const r=el.getBoundingClientRect();
       const s=[textOf(el),el.getAttribute('aria-label'),el.getAttribute('data-testid')].join(' ');
@@ -136,15 +141,22 @@
     })[0];
     click(p); await WAIT(800);
     const overlays=[...document.querySelectorAll('[role="menu"],[role="listbox"],[role="dialog"]')].filter(visible);
-    const root=overlays.find(x=>!before.has(x)) || overlays.at(-1);
-    if(!root)throw new Error('点击模型选择器后没有发现模型菜单/列表');
+    let root=overlays.find(x=>!before.has(x)) || overlays.at(-1);
+    if(!root){
+      // Some current ChatGPT controls expand into a nearby popover without ARIA menu/listbox.
+      const popupCandidates=[...document.querySelectorAll('[data-radix-popper-content-wrapper],[data-radix-menu-content],[data-state="open"]')]
+        .filter(visible).filter(el=>!inSidebar(el)).filter(el=>el.querySelector('button,[role="menuitem"],[role="option"],[role="radio"]'));
+      root=popupCandidates.at(-1)||null;
+    }
+    diagnostic('picker_opened',root?'info':'error',{button:elementSnapshot(p),root:elementSnapshot(root)});
+    if(!root)throw new Error('点击顶部“聊天”后没有发现模型菜单/弹层');
     if(inSidebar(root))throw new Error('安全停止：检测到左侧聊天栏菜单，拒绝继续点击');
     return {button:p,root};
   }
   function menuModelRows(root){
     if(!root||!visible(root))return[];
     if(inSidebar(root))throw new Error('catalog_discovery_invalid: 模型菜单根节点位于左侧聊天栏');
-    const items=[...root.querySelectorAll('[role="menuitem"],[role="option"],button,[role="button"]')]
+    const items=[...root.querySelectorAll('[role="menuitem"],[role="option"],[role="radio"],button,[role="button"]')]
       .filter(visible).filter(el=>!inSidebar(el)),rows=[];
     for(const el of items){
       const label=textOf(el);
