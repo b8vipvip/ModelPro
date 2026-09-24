@@ -89,19 +89,9 @@ test('Work-control helper is the only automatic Work activation path',async()=>{
 });
 
 
-test('Work activation only uses the real ChatGPT Work UI after Sol is verified',async()=>{
- const background=await r('extension/background.js');
- assert.match(background,/verification_work_ui_activation_started/);
- assert.match(background,/source: 'chatgpt_work_ui_control'/);
- assert.match(background,/mergeCatalog\(activationCatalog, 'work-ui-activation'\)/);
- assert.match(background,/deferred_until_sol_verified/);
- assert.match(background,/sendTabMessage\(tabId, \{ type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' \}\)/);
- assert.doesNotMatch(background,/normal_work_policy_request_confirmed/);
- assert.match(background,/const coreCheck = \{ ok: true, standalone: true \}/);
-});
 
 
-test('v0.1.18 uses packaged random 100-prompt bank and safe Work activation',async()=>{
+test('v0.1.19 uses packaged random 100-prompt bank and safe Work activation',async()=>{
  const [background,content,bankText]=await Promise.all([r('extension/background.js'),r('extension/content.js'),r('extension/prompt-bank.json')]);
  const bank=JSON.parse(bankText);
  assert.equal(bank.prompts.length,100);
@@ -115,7 +105,7 @@ test('v0.1.18 uses packaged random 100-prompt bank and safe Work activation',asy
 });
 
 
-test('v0.1.18 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
+test('v0.1.19 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
  const [background,content]=await Promise.all([r('extension/background.js'),r('extension/content.js')]);
  assert.match(background,/probeText: prompt/);
  assert.doesNotMatch(background,/probeText: \`\\\$\\\{marker\\\}/);
@@ -126,15 +116,9 @@ test('v0.1.18 sends natural prompt text without verification prefixes and reacqu
  assert.doesNotMatch(background,/sendVerificationReasoningProbe\(tabId, 'ModelPro Work 模式激活验证'/);
 });
 
-test('v0.1.18 never fabricates a Work request by normal-policy model rewrite',async()=>{
- const background=await r('extension/background.js');
- assert.match(background,/chatgpt_work_ui_control/);
- assert.match(background,/work_ui_control_not_available/);
- assert.doesNotMatch(background,/normal_work_policy_request_confirmed/);
-});
 
 
-test('v0.1.18 never sends or reload-recovers an extra Sol unlock turn',async()=>{
+test('v0.1.19 never sends or reload-recovers an extra Sol unlock turn',async()=>{
  const background=await r('extension/background.js');
  assert.doesNotMatch(background,/verification_sol_picker_b_unlock_started/);
  assert.doesNotMatch(background,/GPTWork GPT-5\.6 Sol 能力解锁验证/);
@@ -143,7 +127,7 @@ test('v0.1.18 never sends or reload-recovers an extra Sol unlock turn',async()=>
 });
 
 
-test('v0.1.18 has one final model-row activation authority without hit-test retry layers',async()=>{
+test('v0.1.19 has one final model-row activation authority without hit-test retry layers',async()=>{
  const content=await r('extension/content.js');
  const start=content.indexOf('async function selectModelForVerification');
  const end=content.indexOf('async function chooseExact',start);
@@ -153,4 +137,22 @@ test('v0.1.18 has one final model-row activation authority without hit-test retr
  assert.doesNotMatch(selection,/modelPickerPointer\(activeCandidate/);
  assert.doesNotMatch(selection,/verification_model_row_reacquired/);
  assert.doesNotMatch(selection,/verification-model-row-reacquired/);
+});
+
+
+test('v0.1.19 follows GPTWork runtime Work transition without a nonexistent page Work control',async()=>{
+ const background=await r('extension/background.js');
+ assert.match(background,/runtime_work_enabled_catalog_observed/);
+ assert.match(background,/source: 'verification_runtime_default'/);
+ assert.match(background,/mergeCatalog\(runtimeCatalog, 'work-runtime-catalog'\)/);
+ assert.doesNotMatch(background,/verification_work_ui_activation_started/);
+ assert.doesNotMatch(background,/sendTabMessage\(tabId, \{ type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' \}\)/);
+});
+
+test('v0.1.19 manual verification owns a clean diagnostic session and publishes final Work state',async()=>{
+ const background=await r('extension/background.js');
+ const auto=background.slice(background.indexOf('async function autoVerify('),background.indexOf('function runtimeLogNativeSyncEnabled'));
+ assert.match(auto,/clearRuntimeLogs\(\)/);
+ assert.match(auto,/clearAutoVerificationStreamCapture\(\)/);
+ assert.match(auto,/state\.autoVerification\.workDiscovery = catalogVerification\.workDiscovery/);
 });

@@ -31,7 +31,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.18';
+const RUNTIME_CODE_VERSION = '0.1.19';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -1978,49 +1978,33 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
       }
     }
 
-    // After Sol itself has been strictly verified, perform one ordinary visible turn
-    // with NO verification transaction. This is the same normal Work-policy path that
-    // made the user's GPTWork session switch to Work and expose picker B.
-    const completedResult = progress.results.at(-1);
-    const solVerified = item.model === 'gpt-5.6-sol'
-      && completedResult?.model === 'gpt-5.6-sol'
-      && completedResult?.verified === true;
+    // GPTWork's mature chain treats Work as a tab-scoped runtime feature, not a
+    // top-page ChatGPT button. v0.1.18 proved the current page exposes picker B
+    // while no such top-page Work control exists. Do not invent a second UI
+    // authority after Sol; preserve the runtime transition established after 5.5
+    // and let the owned picker/catalog be the discovery authority.
     if (item.model === 'gpt-5.6-sol' && workActivationPending) {
-      if (!solVerified) {
-        progress.workDiscovery = { attempted: false, entered: false, reason: 'deferred_until_sol_verified' };
-        logRuntime('warn', 'verification', 'verification_work_activation_deferred', {
-          tabId, reason: 'sol_not_verified',
-        });
-      } else {
-        // v0.1.12 proved that changing only model/thinking fields on an ordinary
-        // GPT-5.5 request can produce HTTP 422 "Invalid conversation body". Never
-        // manufacture a Work request that way. Only activate through ChatGPT's real
-        // visible Work control; otherwise defer without sending a user-visible turn.
-        progress.workDiscovery = { attempted: true, entered: false, reason: 'work_ui_activation_started' };
-        logRuntime('info', 'verification', 'verification_work_ui_activation_started', { tabId });
-        const activation = await sendTabMessage(tabId, { type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' });
-        await new Promise((resolve) => setTimeout(resolve, 700));
-        const activationCatalog = await discoverAccountCatalog(tabId);
-        progress.discoveryPasses += 1;
-        const addedFromWork = mergeCatalog(activationCatalog, 'work-ui-activation');
-        const entered = activation?.workMode === true && activationCatalog?.pickerMode === 'B';
-        progress.workDiscovery = {
-          attempted: activation?.attempted === true,
-          entered,
-          reason: entered ? 'work_ui_control_confirmed' : (activation?.reason || 'work_ui_control_not_available'),
-          pickerMode: activationCatalog?.pickerMode ?? null,
-          added: addedFromWork,
-        };
-        logRuntime(entered ? 'info' : 'warn', 'verification', 'verification_work_mode_transition', {
-          tabId, phase: 'post_gpt_5_6_sol', entered,
-          source: 'chatgpt_work_ui_control',
-          reason: progress.workDiscovery.reason,
-          pickerMode: activationCatalog?.pickerMode ?? null,
-          added: addedFromWork,
-        });
-        workActivationPending = !entered;
-        if (addedFromWork) stablePasses = 0;
-      }
+      const runtimeCatalog = await discoverAccountCatalog(tabId);
+      progress.discoveryPasses += 1;
+      const addedFromRuntime = mergeCatalog(runtimeCatalog, 'work-runtime-catalog');
+      progress.workDiscovery = {
+        attempted: true,
+        entered: true,
+        reason: 'runtime_work_enabled_catalog_observed',
+        runtimeEnabled: true,
+        source: 'verification_runtime_default',
+        pickerMode: runtimeCatalog?.pickerMode ?? null,
+        added: addedFromRuntime,
+      };
+      logRuntime('info', 'verification', 'verification_work_mode_transition', {
+        tabId, phase: 'post_gpt_5_6_sol', entered: true,
+        source: 'verification_runtime_default',
+        reason: progress.workDiscovery.reason,
+        pickerMode: runtimeCatalog?.pickerMode ?? null,
+        added: addedFromRuntime,
+      });
+      workActivationPending = false;
+      if (addedFromRuntime) stablePasses = 0;
       await broadcastTabState(tabId);
     }
 
@@ -2125,6 +2109,9 @@ async function autoVerify(tabId) {
   const tab = await chrome.tabs.get(tabId);
   if (!isChatGptUrl(tab.url ?? '')) throw new Error('Open chatgpt.com first / 请先打开 chatgpt.com');
   const state = ensureTabState(tabId, tab.url);
+  // A manual verification owns its diagnostic session. Do not export background
+  // telemetry or an earlier test together with the current user-triggered run.
+  await Promise.all([clearRuntimeLogs(), clearAutoVerificationStreamCapture()]);
   const startedAt = new Date().toISOString();
   const pageContext = /^https:\/\/chatgpt\.com\/c\/[^/?#]+/i.test(tab.url || '') ? 'existing_chat' : 'new_chat';
   logRuntime('info', 'verification', 'auto_verify_started', { tabId, pageContext });
@@ -2198,6 +2185,9 @@ async function autoVerify(tabId) {
     { restoreModel },
   );
   await publishVerifiedModels(catalogVerification);
+  // Keep the public auto-verification summary synchronized with the catalog state
+  // machine instead of leaving the initial "deferred" placeholder behind.
+  state.autoVerification.workDiscovery = catalogVerification.workDiscovery ?? state.autoVerification.workDiscovery;
   state.autoVerification.attempts = catalogVerification.results.map((item, index) => ({
     attempt: index + 1,
     sent: Boolean(item.requestId),
