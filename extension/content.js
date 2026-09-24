@@ -1379,82 +1379,69 @@ document.addEventListener('pointerdown', (event) => {
     const wantedLabel = String(label || '').trim().toLowerCase().replace(/\s+/g, ' ');
     const modern = await openModernModelMenu();
 
-    if (modern.rows.length) {
-      const candidate = modern.rows.find((row) => {
-        const descriptor = rowModelDescriptor(row);
-        if (desired && (descriptor.model === desired || descriptor.rawId === desired)) return true;
-        if (wantedKey && String(descriptor.selectorKey || '').toLowerCase() === wantedKey) return true;
-        return Boolean(wantedLabel && String(descriptor.label || '').toLowerCase().replace(/\s+/g, ' ') === wantedLabel);
+    if (!modern.rows.length) {
+      await closeModelMenus(modern.trigger);
+      return { attempted: false, observation: collectObservation() };
+    }
+
+    // One authority for final model selection: the exact semantic row returned by the
+    // owned picker transaction. Do not let pointer hit-testing, stale-row reacquisition,
+    // or coordinate retries become additional decision makers. Picker B can render its
+    // last row underneath the fixed Composer (v0.1.17: GPT-5.5 rect y=834..885 while
+    // Composer starts at y=848), leaving the correct row with no trusted hit-test point.
+    const candidate = modern.rows.find((row) => {
+      const descriptor = rowModelDescriptor(row);
+      if (desired && (descriptor.model === desired || descriptor.rawId === desired)) return true;
+      if (wantedKey && String(descriptor.selectorKey || '').toLowerCase() === wantedKey) return true;
+      return Boolean(wantedLabel && String(descriptor.label || '').toLowerCase().replace(/\s+/g, ' ') === wantedLabel);
+    });
+    if (!candidate) {
+      await closeModelMenus(modern.trigger);
+      return { attempted: false, observation: collectObservation() };
+    }
+
+    if (candidate.getAttribute('data-state') !== 'checked') {
+      pointerTrace('verification_model_row_activate', {
+        source: 'owned-semantic-row',
+        desired,
+        selectorKey: wantedKey,
+        label: wantedLabel,
+        target: compactElementProbe(candidate),
       });
-      if (!candidate) {
+      try {
+        candidate.focus?.({ preventScroll: true });
+        candidate.click();
+      } catch (error) {
+        pointerTrace('verification_model_row_activate_failed', {
+          source: 'owned-semantic-row',
+          desired,
+          selectorKey: wantedKey,
+          error: String(error?.message || error || 'row_click_failed'),
+        });
         await closeModelMenus(modern.trigger);
         return { attempted: false, observation: collectObservation() };
       }
-      // The catalog row may already be the active model (especially the default model
-      // on a fresh new-chat page). Treat the owned checked radio as a real selection
-      // acknowledgement instead of requiring a no-op click to dispatch.
-      if (candidate.getAttribute('data-state') === 'checked') {
-        const observation = collectObservation();
-        pointerTrace('verification_model_selection_confirmed', {
-          source: 'verification-model-row-already-checked', desired, selectorKey: wantedKey, label: wantedLabel,
-          observation,
-        });
-        return { attempted: true, observation };
-      }
-      let activeCandidate = candidate;
-      let attempted = await modelPickerPointer(activeCandidate, 'click', 'verification-model-row');
-      if (!attempted) {
-        // Picker B animates/reparents its advanced model rows. A row can still report
-        // a visible rect while hit-testing no longer owns that point. Re-open the same
-        // owned picker and reacquire the exact semantic row once instead of retrying
-        // the stale node three times.
-        await closeModelMenus(modern.trigger);
-        await new Promise((resolve) => window.setTimeout(resolve, 250));
-        const retryMenu = await openModernModelMenu();
-        activeCandidate = retryMenu.rows.find((row) => {
-          const descriptor = rowModelDescriptor(row);
-          if (desired && (descriptor.model === desired || descriptor.rawId === desired)) return true;
-          if (wantedKey && String(descriptor.selectorKey || '').toLowerCase() === wantedKey) return true;
-          return Boolean(wantedLabel && String(descriptor.label || '').toLowerCase().replace(/\s+/g, ' ') === wantedLabel);
-        }) || null;
-        pointerTrace('verification_model_row_reacquired', {
-          desired, selectorKey: wantedKey, label: wantedLabel, reacquired: Boolean(activeCandidate),
-        });
-        attempted = activeCandidate
-          ? await modelPickerPointer(activeCandidate, 'click', 'verification-model-row-reacquired')
-          : false;
-      }
-      if (!attempted) return { attempted: false, observation: collectObservation() };
-      // Never keep using the pre-click row as a liveness authority. Radix replaces or
-      // collapses picker nodes during the transition; after the mandatory settle delay,
-      // re-open/reacquire on any later verification step instead of timing out on a stale
-      // zero-sized element.
-      // A dispatched click is not a completed model selection. Wait until ChatGPT's
-      // Composer reflects the requested model before allowing the probe transaction.
-      const confirmed = desired
-        ? await waitUntil(() => {
-            // In the new-chat Composer ChatGPT can intentionally hide the model label
-            // after a successful row click and leave only the reasoning control visible.
-            // The exact owned catalog row's radio state is therefore the primary UI
-            // acknowledgement; Composer model text remains a secondary read-only signal.
-            if (activeCandidate?.isConnected && activeCandidate.getAttribute('data-state') === 'checked') return true;
-            return collectObservation().model === desired;
-          }, 3500, 100)
-        : await waitUntil(() => !visible(candidate) || !visibleIntelligencePickerContent(), 1800, 100);
-      const observation = collectObservation();
-      pointerTrace(confirmed ? 'verification_model_selection_confirmed' : 'verification_model_selection_unconfirmed', {
-        source: 'verification-model-row', desired, selectorKey: wantedKey, label: wantedLabel,
-        observation,
-      });
-      if (!confirmed) {
-        await closeModelMenus(modern.trigger);
-        return { attempted: false, observation };
-      }
-      return { attempted: true, observation };
     }
 
-    await closeModelMenus(modern.trigger);
-    return { attempted: false, observation: collectObservation() };
+    // The row's checked state is the authoritative UI acknowledgement. Composer text
+    // is secondary because ChatGPT may intentionally hide the model label after selection.
+    const confirmed = await waitUntil(() => {
+      if (candidate?.isConnected && candidate.getAttribute('data-state') === 'checked') return true;
+      return desired && collectObservation().model === desired;
+    }, 3500, 100);
+    const observation = collectObservation();
+    pointerTrace(confirmed ? 'verification_model_selection_confirmed' : 'verification_model_selection_unconfirmed', {
+      source: 'owned-semantic-row',
+      desired,
+      selectorKey: wantedKey,
+      label: wantedLabel,
+      observation,
+    });
+    if (!confirmed) {
+      await closeModelMenus(modern.trigger);
+      return { attempted: false, observation };
+    }
+    return { attempted: true, observation };
   }
 
   async function chooseExact(triggerSelectors, desired, normalize, { skipModern = false } = {}) {

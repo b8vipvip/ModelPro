@@ -101,7 +101,7 @@ test('Work activation only uses the real ChatGPT Work UI after Sol is verified',
 });
 
 
-test('v0.1.17 uses packaged random 100-prompt bank and safe Work activation',async()=>{
+test('v0.1.18 uses packaged random 100-prompt bank and safe Work activation',async()=>{
  const [background,content,bankText]=await Promise.all([r('extension/background.js'),r('extension/content.js'),r('extension/prompt-bank.json')]);
  const bank=JSON.parse(bankText);
  assert.equal(bank.prompts.length,100);
@@ -115,17 +115,18 @@ test('v0.1.17 uses packaged random 100-prompt bank and safe Work activation',asy
 });
 
 
-test('v0.1.17 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
+test('v0.1.18 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
  const [background,content]=await Promise.all([r('extension/background.js'),r('extension/content.js')]);
  assert.match(background,/probeText: prompt/);
  assert.doesNotMatch(background,/probeText: \`\\\$\\\{marker\\\}/);
  assert.match(content,/composerText\(composer\)\.trim\(\) === probeText/);
- assert.match(content,/verification_model_row_reacquired/);
- assert.match(content,/verification-model-row-reacquired/);
+ assert.match(content,/verification_model_row_activate/);
+ assert.match(content,/candidate\.click\(\)/);
+ assert.doesNotMatch(content,/verification_model_row_reacquired/);
  assert.doesNotMatch(background,/sendVerificationReasoningProbe\(tabId, 'ModelPro Work 模式激活验证'/);
 });
 
-test('v0.1.17 never fabricates a Work request by normal-policy model rewrite',async()=>{
+test('v0.1.18 never fabricates a Work request by normal-policy model rewrite',async()=>{
  const background=await r('extension/background.js');
  assert.match(background,/chatgpt_work_ui_control/);
  assert.match(background,/work_ui_control_not_available/);
@@ -133,10 +134,23 @@ test('v0.1.17 never fabricates a Work request by normal-policy model rewrite',as
 });
 
 
-test('v0.1.17 never sends or reload-recovers an extra Sol unlock turn',async()=>{
+test('v0.1.18 never sends or reload-recovers an extra Sol unlock turn',async()=>{
  const background=await r('extension/background.js');
  assert.doesNotMatch(background,/verification_sol_picker_b_unlock_started/);
  assert.doesNotMatch(background,/GPTWork GPT-5\.6 Sol 能力解锁验证/);
  assert.doesNotMatch(background,/const unlockProbe = await sendVerificationReasoningProbe/);
  assert.match(background,/const rediscovered = await discoverAccountCatalog\(tabId\)/);
+});
+
+
+test('v0.1.18 has one final model-row activation authority without hit-test retry layers',async()=>{
+ const content=await r('extension/content.js');
+ const start=content.indexOf('async function selectModelForVerification');
+ const end=content.indexOf('async function chooseExact',start);
+ const selection=content.slice(start,end);
+ assert.match(selection,/source: 'owned-semantic-row'/);
+ assert.match(selection,/candidate\.click\(\)/);
+ assert.doesNotMatch(selection,/modelPickerPointer\(activeCandidate/);
+ assert.doesNotMatch(selection,/verification_model_row_reacquired/);
+ assert.doesNotMatch(selection,/verification-model-row-reacquired/);
 });
