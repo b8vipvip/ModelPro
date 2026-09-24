@@ -32,7 +32,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.37';
+const RUNTIME_CODE_VERSION = '0.1.38';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -978,14 +978,20 @@ const networkMonitor = new ChatGptNetworkMonitor({
   onStatus(tabId, monitor) {
     const state = ensureTabState(tabId);
     state.monitor = monitor;
-    if (!monitor.attached && state.phase === 'waiting') {
+    const detachedWhileWaiting = !monitor.attached && state.phase === 'waiting';
+    if (detachedWhileWaiting) {
       state.phase = 'error';
       state.lastError = monitor.error || 'request_lock_monitor_detached';
     }
-    logRuntime(monitor.attached ? 'info' : 'warn', 'network', 'monitor_status', {
+    // Picker/navigation transitions can detach CDP cleanly. Keep those lifecycle
+    // transitions visible in diagnostics without promoting them to warnings unless
+    // verification was actively waiting on the monitor or the detach carried an error.
+    const monitorLevel = monitor.attached || (!monitor.error && !detachedWhileWaiting) ? 'info' : 'warn';
+    logRuntime(monitorLevel, 'network', 'monitor_status', {
       tabId,
       attached: monitor.attached,
       error: monitor.error,
+      detachedWhileWaiting,
     });
     void broadcastTabState(tabId);
   },
@@ -2859,6 +2865,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           url: sender.tab.url || null,
           eventLoopLagMs: Math.max(0, Math.min(60000, Number(details.eventLoopLagMs) || 0)),
           maxLongTaskMs: Math.max(0, Math.min(60000, Number(details.maxLongTaskMs) || 0)),
+          pageLongTaskObserved: details.pageLongTaskObserved === true,
           longTaskCount: Math.max(0, Math.min(10000, Number(details.longTaskCount) || 0)),
           recentLongTasks: sanitizeLogValue(Array.isArray(details.recentLongTasks) ? details.recentLongTasks.slice(-8) : []),
           mutationCount: Math.max(0, Math.min(1000000, Number(details.mutationCount) || 0)),

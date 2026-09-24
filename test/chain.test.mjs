@@ -52,7 +52,7 @@ test('standalone verification reinjects content scripts into pre-existing ChatGP
 });
 
 
-test('v0.1.37 recovers picker closed by first debugger attach and background owns automatic diagnostics export',async()=>{
+test('v0.1.38 recovers picker closed by first debugger attach and background owns automatic diagnostics export',async()=>{
  const content=await r('extension/content.js'); const popup=await r('extension/popup.js');
  assert.match(content,/invalidated_after_debugger_attach/);
  assert.match(content,/picker_reopen_after_debugger_attach/);
@@ -88,7 +88,7 @@ test('v0.1.7 standalone active paths omit Native Host residue',async()=>{
 
 
 
-test('v0.1.37 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
+test('v0.1.38 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
  const [background,content]=await Promise.all([r('extension/background.js'),r('extension/content.js')]);
  assert.match(background,/probeText: prompt/);
  assert.doesNotMatch(background,/probeText: \`\\\$\\\{marker\\\}/);
@@ -101,7 +101,7 @@ test('v0.1.37 sends natural prompt text without verification prefixes and reacqu
 
 
 
-test('v0.1.37 never sends or reload-recovers an extra Sol unlock turn',async()=>{
+test('v0.1.38 never sends or reload-recovers an extra Sol unlock turn',async()=>{
  const background=await r('extension/background.js');
  assert.doesNotMatch(background,/verification_sol_picker_b_unlock_started/);
  assert.doesNotMatch(background,/GPTWork GPT-5\.6 Sol 能力解锁验证/);
@@ -110,7 +110,7 @@ test('v0.1.37 never sends or reload-recovers an extra Sol unlock turn',async()=>
 });
 
 
-test('v0.1.37 has one final model-row activation authority without hit-test retry layers',async()=>{
+test('v0.1.38 has one final model-row activation authority without hit-test retry layers',async()=>{
  const content=await r('extension/content.js');
  const start=content.indexOf('async function selectModelForVerification');
  const end=content.indexOf('async function chooseExact',start);
@@ -124,7 +124,7 @@ test('v0.1.37 has one final model-row activation authority without hit-test retr
 
 
 
-test('v0.1.37 manual verification owns a clean diagnostic session and publishes final Work state',async()=>{
+test('v0.1.38 manual verification owns a clean diagnostic session and publishes final Work state',async()=>{
  const background=await r('extension/background.js');
  const auto=background.slice(background.indexOf('async function autoVerify('),background.indexOf('function runtimeLogNativeSyncEnabled'));
  assert.match(auto,/clearRuntimeLogs\(\)/);
@@ -133,7 +133,7 @@ test('v0.1.37 manual verification owns a clean diagnostic session and publishes 
 });
 
 
-test('v0.1.37 packaged prompt bank remains intact without page Work-control dependency',async()=>{
+test('v0.1.38 packaged prompt bank remains intact without page Work-control dependency',async()=>{
  const [background,bankText]=await Promise.all([r('extension/background.js'),r('extension/prompt-bank.json')]);
  const bank=JSON.parse(bankText);
  assert.equal(bank.prompts.length,100);
@@ -143,7 +143,7 @@ test('v0.1.37 packaged prompt bank remains intact without page Work-control depe
 });
 
 
-test('v0.1.37 distinguishes inline A rows from the real Select-model B catalog',async()=>{
+test('v0.1.38 distinguishes inline A rows from the real Select-model B catalog',async()=>{
  const content=await r('extension/content.js');
  assert.match(content,/picker-mode-a-advanced-inline-list/);
  assert.match(content,/alreadyVisibleRows\.length && !initialOpener/);
@@ -155,7 +155,7 @@ test('v0.1.37 distinguishes inline A rows from the real Select-model B catalog',
 });
 
 
-test('v0.1.37 unlocks real picker B with one normal Work-policy turn after verified Sol',async()=>{
+test('v0.1.38 unlocks real picker B with one normal Work-policy turn after verified Sol',async()=>{
  const background=await r('extension/background.js');
  assert.match(background,/verification_work_activation_turn_started/);
  assert.match(background,/sendVerificationReasoningProbe\(tabId, 'work-mode-bootstrap'/);
@@ -170,7 +170,7 @@ test('v0.1.37 unlocks real picker B with one normal Work-policy turn after verif
 });
 
 
-test('v0.1.37 Work completion is owned by observed picker B, not runtime flag alone',async()=>{
+test('v0.1.38 Work completion is owned by observed picker B, not runtime flag alone',async()=>{
  const background=await r('extension/background.js');
  assert.doesNotMatch(background,/runtime_work_enabled_catalog_observed/);
  assert.match(background,/normal_work_turn_picker_b_observed/);
@@ -178,7 +178,7 @@ test('v0.1.37 Work completion is owned by observed picker B, not runtime flag al
 });
 
 
-test('v0.1.37 Work bootstrap preserves ChatGPT reasoning body while normal policy changes transport',async()=>{
+test('v0.1.38 Work bootstrap preserves ChatGPT reasoning body while normal policy changes transport',async()=>{
  const background=await r('extension/background.js');
  assert.match(background,/const workBootstrapTabs = new Set\(\)/);
  assert.match(background,/preferredReasoning: workBootstrapTabs\.has\(Number\(tabId\)\) \? null : currentSettings\.preferredReasoning/);
@@ -188,7 +188,7 @@ test('v0.1.37 Work bootstrap preserves ChatGPT reasoning body while normal polic
 });
 
 
-test('v0.1.37 retains Fetch-forwarded Work request evidence when Network id is absent',async()=>{
+test('v0.1.38 retains Fetch-forwarded Work request evidence when Network id is absent',async()=>{
  const background=await r('extension/background.js');
  assert.match(background,/state\.lastForwardedRequest = \{/);
  assert.match(background,/fetchRequestId: rewrite\.fetchRequestId/);
@@ -198,7 +198,7 @@ test('v0.1.37 retains Fetch-forwarded Work request evidence when Network id is a
 
 
 
-test('v0.1.37 background auto exports terminal verification log',async()=>{
+test('v0.1.38 background auto exports terminal verification log',async()=>{
  const background=await r('extension/background.js');
  assert.match(background,/async function autoDownloadVerificationLog/);
  assert.match(background,/chrome\.downloads\.download/);
@@ -206,7 +206,7 @@ test('v0.1.37 background auto exports terminal verification log',async()=>{
 });
 
 
-test('v0.1.37 has one terminal response-model authority and restores Network capture per probe',async()=>{
+test('v0.1.38 has one terminal response-model authority and restores Network capture per probe',async()=>{
  const [background,network]=await Promise.all([r('extension/background.js'),r('extension/network-evidence.js')]);
  assert.doesNotMatch(network,/routingModel|routingProfile/);
  assert.doesNotMatch(background,/profileConfirmed|routingModel === target/);
@@ -217,7 +217,7 @@ test('v0.1.37 has one terminal response-model authority and restores Network cap
 });
 
 
-test('v0.1.37 exports exactly one automatic verification file',async()=>{
+test('v0.1.38 exports exactly one automatic verification file',async()=>{
  const popup=await r('extension/popup.js');
  const background=await r('extension/background.js');
  assert.match(background,/autoDownloadVerificationLog\(\)/);
@@ -226,7 +226,7 @@ test('v0.1.37 exports exactly one automatic verification file',async()=>{
 });
 
 
-test('v0.1.37 resolved served-model evidence outranks default fallback and is never downgraded',async()=>{
+test('v0.1.38 resolved served-model evidence outranks default fallback and is never downgraded',async()=>{
  const evidence=await r('extension/network-evidence.js');
  const background=await r('extension/background.js');
  assert.match(evidence,/if \(SERVED_MODEL_KEYS\.has\(key\)\) return 150;/);
@@ -236,7 +236,7 @@ test('v0.1.37 resolved served-model evidence outranks default fallback and is ne
 });
 
 
-test('v0.1.37 settles picker B page state before the verification probe',async()=>{
+test('v0.1.38 settles picker B page state before the verification probe',async()=>{
  const background=await r('extension/background.js');
  assert.match(background,/item\.pickerMode === 'B'/);
  assert.match(background,/setTimeout\(resolve, 1200\)/);
@@ -247,7 +247,7 @@ test('v0.1.37 settles picker B page state before the verification probe',async()
 });
 
 
-test('v0.1.37 treats exact Work default_model_slug as Picker-B response identity',async()=>{
+test('v0.1.38 treats exact Work default_model_slug as Picker-B response identity',async()=>{
  const [background,evidence,policy]=await Promise.all([r('extension/background.js'),r('extension/network-evidence.js'),r('extension/policy.js')]);
  assert.match(evidence,/defaultModel: defaultModel\.value/);
  assert.match(evidence,/defaultModelField: defaultModel\.path/);
@@ -263,7 +263,7 @@ test('v0.1.37 treats exact Work default_model_slug as Picker-B response identity
  assert.match(policy,/'gpt-5\.6-luna': 'gpt-5\.6-luna-wm'/);
 });
 
-test('v0.1.37 extracts real Picker-B Work identity from SSE for all affected profiles',async()=>{
+test('v0.1.38 extracts real Picker-B Work identity from SSE for all affected profiles',async()=>{
  const [{extractResponseEvidence},{modelTransportId}]=await Promise.all([
    import('../extension/network-evidence.js'),
    import('../extension/policy.js'),
@@ -285,4 +285,18 @@ test('v0.1.37 extracts real Picker-B Work identity from SSE for all affected pro
    assert.equal(evidence.defaultModel,target,target+' Work profile identity');
    assert.match(evidence.defaultModelField,/default_model_slug$/,target+' identity field');
  }
+});
+
+
+test('v0.1.38 keeps page-wide long tasks informational and clean detaches non-warning',async()=>{
+ const [background,content]=await Promise.all([r('extension/background.js'),r('extension/content.js')]);
+ assert.match(content,/const pageLongTaskObserved = performanceTelemetry\.maxLongTaskMs >= 100;/);
+ const abnormalStart=content.indexOf('const abnormal = lag >= 120');
+ const abnormalEnd=content.indexOf(';',abnormalStart);
+ const abnormalExpr=content.slice(abnormalStart,abnormalEnd+1);
+ assert.doesNotMatch(abnormalExpr,/maxLongTaskMs/);
+ assert.match(content,/pageLongTaskObserved,/);
+ assert.match(background,/const detachedWhileWaiting = !monitor\.attached && state\.phase === 'waiting';/);
+ assert.match(background,/const monitorLevel = monitor\.attached \|\| \(!monitor\.error && !detachedWhileWaiting\) \? 'info' : 'warn';/);
+ assert.match(background,/pageLongTaskObserved: details\.pageLongTaskObserved === true/);
 });
