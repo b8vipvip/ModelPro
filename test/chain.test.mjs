@@ -81,9 +81,9 @@ test('v0.1.7 standalone active paths omit Native Host residue',async()=>{
 });
 
 
-test('legacy page Work-control helper remains isolated from the v0.1.10 automatic state machine',async()=>{
+test('Work-control helper is the only automatic Work activation path',async()=>{
  const background=await r('extension/background.js'); const content=await r('extension/content.js');
- assert.doesNotMatch(background,/sendTabMessage\(tabId, \{ type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' \}\)/);
+ assert.match(background,/sendTabMessage\(tabId, \{ type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' \}\)/);
  assert.match(background,/normal_work_policy_turn/);
  assert.match(content,/work_control_clicked_and_confirmed/);
 });
@@ -101,7 +101,7 @@ test('Work activation uses a real normal-policy request after Sol and then grows
 });
 
 
-test('v0.1.13 uses packaged random 100-prompt bank and safe Work activation',async()=>{
+test('v0.1.14 uses packaged random 100-prompt bank and safe Work activation',async()=>{
  const [background,content,bankText]=await Promise.all([r('extension/background.js'),r('extension/content.js'),r('extension/prompt-bank.json')]);
  const bank=JSON.parse(bankText);
  assert.equal(bank.prompts.length,100);
@@ -115,7 +115,7 @@ test('v0.1.13 uses packaged random 100-prompt bank and safe Work activation',asy
 });
 
 
-test('v0.1.13 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
+test('v0.1.14 sends natural prompt text without verification prefixes and reacquires animated model rows',async()=>{
  const [background,content]=await Promise.all([r('extension/background.js'),r('extension/content.js')]);
  assert.match(background,/probeText: prompt/);
  assert.doesNotMatch(background,/probeText: \`\\\$\\\{marker\\\}/);
@@ -125,7 +125,7 @@ test('v0.1.13 sends natural prompt text without verification prefixes and reacqu
  assert.doesNotMatch(background,/sendVerificationReasoningProbe\(tabId, 'ModelPro Work 模式激活验证'/);
 });
 
-test('v0.1.13 never fabricates a Work request by normal-policy model rewrite',async()=>{
+test('v0.1.14 never fabricates a Work request by normal-policy model rewrite',async()=>{
  const background=await r('extension/background.js');
  assert.match(background,/chatgpt_work_ui_control/);
  assert.match(background,/work_ui_control_not_available/);
