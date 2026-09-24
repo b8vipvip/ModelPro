@@ -2,6 +2,7 @@ import {
   DEFAULT_POLICY,
   DEFAULT_SETTINGS,
   normalizeConcreteModelId,
+  modelTransportId,
   normalizePolicy,
   normalizeReasoningLevel,
   normalizeSettings,
@@ -31,7 +32,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.35';
+const RUNTIME_CODE_VERSION = '0.1.36';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -773,6 +774,8 @@ function mergeResponseEvidence(state, evidence) {
     requestId,
     capturedAt: evidence?.capturedAt ?? previous?.capturedAt ?? new Date().toISOString(),
     model: modelConflict ? null : evidence?.model || previousModel || null,
+    defaultModel: evidence?.defaultModel || previous?.defaultModel || null,
+    defaultModelField: evidence?.defaultModelField || previous?.defaultModelField || null,
     reasoning: reasoningConflict ? null : evidence?.reasoning || previous?.reasoning || null,
     conflicts: { model: modelConflict, reasoning: reasoningConflict },
     fields: {
@@ -793,15 +796,21 @@ function verificationResponseObservation(tabId, responseEvidence) {
   const target = normalizeConcreteModelId(transaction?.model);
   const observed = normalizeConcreteModelId(responseEvidence?.model);
   const field = String(responseEvidence?.fields?.model || '');
-  // default_model_slug describes a fallback/default and is not proof of the model
-  // that served this turn. In contrast resolved/served/used model fields describe
-  // backend execution and MUST remain authoritative for strict page=request=response
-  // verification. A mismatch there is a real mismatch, not evidence to hide.
+  const defaultModel = normalizeConcreteModelId(responseEvidence?.defaultModel);
+  const workTarget = Boolean(target && modelTransportId(target) !== target);
+  const workProfileConfirmed = Boolean(workTarget && defaultModel === target);
+  // v0.1.35 raw SSE established the Work contract: Picker-B turns expose the
+  // selected Work profile in default_model_slug (for example gpt-6-sol-wm) while
+  // resolved_model_slug reports the underlying execution family (gpt-5-6). For a
+  // Work target, an exact default_model_slug match is therefore the response-side
+  // identity authority; retain resolved_model_slug separately as backend diagnostics.
   return {
-    model: responseEvidence?.conflicts?.model ? null : observed,
-    backendResolvedModel: target && observed && observed !== target ? observed : null,
-    downgraded: false,
-    reason: target && observed && observed !== target ? 'served_model_mismatch' : null,
+    model: responseEvidence?.conflicts?.model ? null : (workProfileConfirmed ? target : observed),
+    backendResolvedModel: workProfileConfirmed && observed && observed !== target ? observed : null,
+    downgraded: workProfileConfirmed && observed && observed !== target,
+    reason: workProfileConfirmed ? 'work_profile_confirmed_by_default_model_slug'
+      : target && observed && observed !== target ? 'served_model_mismatch' : null,
+    field: workProfileConfirmed ? responseEvidence?.defaultModelField || 'default_model_slug' : field,
   };
 }
 
@@ -900,7 +909,7 @@ async function applyNetworkEvidence(tabId, evidence) {
         tabId,
         verificationModel: verificationTransactionForTab(tabId)?.model ?? null,
         backendResolvedModel: modelObservation.backendResolvedModel,
-        field: responseEvidence.fields?.model ?? null,
+        field: modelObservation.field ?? responseEvidence.fields?.model ?? null,
       });
     }
     const result = await verifyObservation({

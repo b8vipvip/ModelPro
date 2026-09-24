@@ -141,8 +141,11 @@ function inspectObjects(values, mode = 'response') {
   for (const value of values) collectCandidates(value, candidates, [], 0, mode);
   const model = selectCandidate(candidates.model);
   const reasoning = selectCandidate(candidates.reasoning);
+  const defaultModel = selectCandidate(candidates.model.filter((candidate) => canonicalKey(candidate.path.split('.').at(-1) || '') === 'default_model_slug'));
   return {
     model: model.value,
+    defaultModel: defaultModel.value,
+    defaultModelField: defaultModel.path,
     reasoning: reasoning.value,
     conflicts: { model: model.conflict, reasoning: reasoning.conflict },
     fields: { model: model.path, reasoning: reasoning.path },
@@ -388,6 +391,8 @@ export function extractResponseEvidence({ body = '', headers = {}, mimeType = ''
   const bodyEvidence = inspectObjects(inspectedBody.values);
   return {
     ...mergeEvidence(headerEvidence, bodyEvidence),
+    defaultModel: bodyEvidence.defaultModel ?? null,
+    defaultModelField: bodyEvidence.defaultModelField ?? null,
     evidenceSource: 'network_response_metadata',
     diagnostics: {
       mimeType: String(mimeType || ''),

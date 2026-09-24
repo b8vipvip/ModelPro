@@ -40,6 +40,7 @@ const MODEL_ALIASES = Object.freeze({
   'gpt-5-6': 'gpt-5.6-sol',
   'gpt-6-astra-wm': 'gpt-6-astra',
   'gpt-6-sol-wm': 'gpt-6-sol',
+  'gpt-6-luna-wm': 'gpt-6-luna',
 });
 
 const NON_CONCRETE_MODEL_IDS = new Set(['auto']);
@@ -49,6 +50,7 @@ const MODEL_TRANSPORT_IDS = Object.freeze({
   'gpt-5.6-sol': 'gpt-5.6-sol-wm',
   'gpt-6-astra': 'gpt-6-astra-wm',
   'gpt-6-sol': 'gpt-6-sol-wm',
+  'gpt-6-luna': 'gpt-6-luna-wm',
 });
 
 function unique(values) {
