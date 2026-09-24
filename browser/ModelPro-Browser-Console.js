@@ -1,5 +1,5 @@
 /*
- ModelPro Browser Console Verifier v0.3.3
+ ModelPro Browser Console Verifier v0.3.4
  Paste this entire file into Chrome DevTools Console on https://chatgpt.com/
  It discovers visible model choices, selects each model, sends deterministic probes,
  validates the visible answer, and automatically downloads a JSON report.
@@ -11,7 +11,7 @@
 */
 (async () => {
   'use strict';
-  const VERSION='0.3.3-browser', MARKER='ModelPro 浏览器验证';
+  const VERSION='0.3.4-browser', MARKER='ModelPro 浏览器验证';
   const WAIT=ms=>new Promise(r=>setTimeout(r,ms));
   const now=()=>new Date().toISOString();
   const norm=s=>String(s??'').replace(/\s+/g,' ').trim();
@@ -105,6 +105,17 @@
     ];
     const all=[...new Set(selectors.flatMap(s=>[...document.querySelectorAll(s)]))]
       .filter(visible).filter(el=>!inSidebar(el));
+    // Current ChatGPT home can render the model/mode control as text buttons without
+    // model-related attributes. Add only top-center controls, never sidebar controls.
+    const topCenter=[...document.querySelectorAll('button,[role="button"]')].filter(visible).filter(el=>{
+      if(inSidebar(el))return false;
+      const r=el.getBoundingClientRect(),cx=r.left+r.width/2;
+      const s=[textOf(el),el.getAttribute('aria-label'),el.getAttribute('data-testid')].join(' ');
+      return r.top<150 && cx>innerWidth*.20 && cx<innerWidth*.80 &&
+        /chat|聊天|work|工作|model|模型|gpt|astra|sol|pro|luna|terra/i.test(s) &&
+        !/share|共享|send|发送|new chat|新聊天/i.test(s);
+    });
+    all.push(...topCenter.filter(x=>!all.includes(x)));
     return all.filter(el=>{
       const r=el.getBoundingClientRect();
       const s=[textOf(el),el.getAttribute('aria-label'),el.getAttribute('data-testid')].join(' ');
@@ -116,7 +127,7 @@
   async function openPicker(){
     const before=new Set([...document.querySelectorAll('[role="menu"],[role="listbox"],[role="dialog"]')].filter(visible));
     const c=pickerCandidates();
-    if(!c.length)throw new Error('找不到顶部模型选择器按钮（已明确排除左侧聊天栏）');
+    if(!c.length)throw new Error('找不到顶部模型/模式选择器按钮（已明确排除左侧聊天栏）');
     const p=c.sort((a,b)=>{
       const ad=(a.getAttribute('data-testid')||'').toLowerCase(),bd=(b.getAttribute('data-testid')||'').toLowerCase();
       return (bd.includes('model')?2:0)-(ad.includes('model')?2:0);
@@ -149,8 +160,12 @@
   function download(obj){ const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json'}); const a=document.createElement('a'),stamp=new Date().toISOString().replace(/[:.]/g,'-'); a.href=URL.createObjectURL(blob); a.download='ModelPro-Browser-Report-'+stamp+'.json'; document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),3000); }
   function finalize(reason='completed'){
     if(finalized)return; finalized=true; report.completedAt=now(); report.finishReason=reason;
-    report.summary={total:report.discoveredModels.length,completed:report.results.length,passed:report.results.filter(x=>x.probeAnswerConfirmed).length,failed:report.results.filter(x=>!x.probeAnswerConfirmed).length,backendServedModelConfirmed:0,outcome:report.results.length===report.discoveredModels.length&&report.results.every(x=>x.probeAnswerConfirmed)?'browser_probe_pass':'browser_probe_incomplete'};
-    log('info','verification_finished',report.summary); download(report); if(statusEl)statusEl.textContent+='\n\n完成：'+report.summary.outcome+'\nJSON 已自动下载'; window.__MODELPRO_REPORT__=report;
+    report.summary={total:report.discoveredModels.length,completed:report.results.length,passed:report.results.filter(x=>x.probeAnswerConfirmed).length,failed:report.results.filter(x=>!x.probeAnswerConfirmed).length,backendServedModelConfirmed:0,outcome:reason==='fatal_error'?'browser_probe_error':
+        (report.discoveredModels.length>0&&report.results.length===report.discoveredModels.length&&report.results.every(x=>x.probeAnswerConfirmed)?'browser_probe_pass':'browser_probe_incomplete')};
+    log('info','verification_finished',report.summary); download(report); if(statusEl){
+      const err=report.fatalError?'\n错误：'+String(report.fatalError).split('\n')[0].replace(/^Error:\s*/,''):'';
+      statusEl.textContent+='\n\n'+(reason==='fatal_error'?'测试报错':'完成')+'：'+report.summary.outcome+err+'\nJSON 已自动下载';
+    } window.__MODELPRO_REPORT__=report;
   }
   try{
     if(location.hostname!=='chatgpt.com')throw new Error('请在 https://chatgpt.com/ 页面运行');
