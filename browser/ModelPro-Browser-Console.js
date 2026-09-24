@@ -1,5 +1,5 @@
 /*
- ModelPro Browser Console Verifier v0.4.2
+ ModelPro Browser Console Verifier v0.4.3
  Paste this entire file into Chrome DevTools Console on https://chatgpt.com/
  It uses conversation-driven discovery when the home page has no visible model picker,
  validates the visible answer, and automatically downloads a JSON report.
@@ -11,7 +11,7 @@
 */
 (async () => {
   'use strict';
-  const VERSION='0.4.2-browser', MARKER='ModelPro 浏览器验证';
+  const VERSION='0.4.3-browser', MARKER='ModelPro 浏览器验证';
   const WAIT=ms=>new Promise(r=>setTimeout(r,ms));
   const now=()=>new Date().toISOString();
   const norm=s=>String(s??'').replace(/\s+/g,' ').trim();
@@ -69,7 +69,8 @@
     statusEl=document.createElement('div'); panel.append(statusEl);
     const stop=document.createElement('button'); stop.textContent='停止并导出'; stop.style.marginTop='8px'; stop.onclick=()=>{window.__MODELPRO_STOP__=true;finalize('stopped_by_user')}; panel.append(stop); document.body.append(panel);
   }
-  const visible=el=>!!el&&el.isConnected&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none'&&el.getBoundingClientRect().width>0&&el.getBoundingClientRect().height>0;
+  const rendered=el=>!!el&&el.isConnected&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none'&&el.getBoundingClientRect().width>0&&el.getBoundingClientRect().height>0;
+  const visible=el=>{if(!rendered(el))return false; const r=el.getBoundingClientRect(); return r.bottom>0&&r.right>0&&r.top<innerHeight&&r.left<innerWidth;};
   const textOf=el=>norm(el?.innerText||el?.textContent||el?.getAttribute?.('aria-label')||'');
   function click(el){ el.scrollIntoView({block:'center',inline:'center'}); el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true})); el.click(); }
   function findComposer(){
@@ -83,7 +84,24 @@
   }
   function findSend(){ return [...document.querySelectorAll('button')].filter(visible).find(b=>/send|发送/i.test([b.getAttribute('data-testid'),b.getAttribute('aria-label'),textOf(b)].join(' '))&&!b.disabled); }
   async function sendPrompt(text){ const c=findComposer(); if(!c)throw new Error('找不到 ChatGPT 输入框'); setComposer(c,text); await WAIT(300); const b=findSend(); if(b)click(b); else c.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true,cancelable:true})); log('info','probe_sent',{text}); }
-  function assistantBlocks(){ const a=[...document.querySelectorAll('[data-message-author-role="assistant"]')].filter(visible); if(a.length)return a; return [...document.querySelectorAll('article[data-testid^="conversation-turn"]')].filter(visible); }
+  function assistantBlocks(){ const a=[...document.querySelectorAll('[data-message-author-role="assistant"]')].filter(rendered); if(a.length)return a; return [...document.querySelectorAll('article[data-testid^="conversation-turn"]')].filter(rendered); }
+  function latestAssistant(){const a=assistantBlocks();return a.at(-1)||null;}
+  async function waitBoundAssistantAnswer(expected,target,timeout=60000){
+    const deadline=Date.now()+timeout; let last='',lastText='',stableSince=0;
+    while(Date.now()<deadline){
+      if(window.__MODELPRO_STOP__)throw new Error('stopped');
+      const newest=latestAssistant(); if(newest&&newest!==target&&textOf(newest)!=='正在思考')target=newest;
+      if(target&&target.isConnected){
+        last=norm(textOf(target));
+        const generating=!!document.querySelector('button[data-testid="stop-button"],button[aria-label*="Stop" i],button[aria-label*="停止"]');
+        if(last===lastText&&last){if(!stableSince)stableSince=Date.now();}else{lastText=last;stableSince=Date.now();}
+        const matches=[...last.matchAll(/校验值\s*[=＝:：]\s*(\d+)/g)],m=matches.at(-1);
+        if(m&&!generating&&Date.now()-stableSince>=800)return {answer:+m[1],text:last.slice(-2000),ok:+m[1]===expected,turnStable:true};
+      }
+      await WAIT(250);
+    }
+    return {answer:null,text:last.slice(-2000),ok:false,timedOut:true};
+  }
   async function waitAnswer(expected,beforeCount,timeout=120000){
     const deadline=Date.now()+timeout; let last='',stableSince=0,lastText='',target=null;
     while(Date.now()<deadline){
@@ -210,19 +228,7 @@
     if(afterTransitionBlocks.length>beforeAssist){
       const target=afterTransitionBlocks[afterTransitionBlocks.length-1];
       diagnostic('bootstrap_answer_binding','info',{beforeAssist,afterTransitionCount:afterTransitionBlocks.length,binding:'existing_new_turn',target:elementSnapshot(target),transition});
-      const deadline=Date.now()+60000; let last='',lastText='',stableSince=0;
-      while(Date.now()<deadline){
-        last=norm(textOf(target));
-        const generating=!!document.querySelector('button[data-testid="stop-button"],button[aria-label*="Stop" i],button[aria-label*="停止"]');
-        if(last===lastText&&last){if(!stableSince)stableSince=Date.now();}else{lastText=last;stableSince=Date.now();}
-        if(!generating&&last&&Date.now()-stableSince>=1200){
-          const matches=[...last.matchAll(/校验值\\s*[=＝:：]\\s*(\\d+)/g)],m=matches.at(-1);
-          ans=m?{answer:+m[1],text:last.slice(-2000),ok:+m[1]===p.expectedValue,turnStable:true}:{answer:null,text:last.slice(-2000),ok:false,missingAnswer:true,turnStable:true};
-          break;
-        }
-        await WAIT(300);
-      }
-      if(!ans)ans={answer:null,text:last.slice(-2000),ok:false,timedOut:true};
+      ans=await waitBoundAssistantAnswer(p.expectedValue,target,60000);
     }else{
       diagnostic('bootstrap_answer_binding','info',{beforeAssist,afterTransitionCount:afterTransitionBlocks.length,binding:'wait_for_new_turn',transition});
       ans=await waitAnswer(p.expectedValue,beforeAssist,60000);
