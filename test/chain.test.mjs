@@ -81,14 +81,11 @@ test('v0.1.7 standalone active paths omit Native Host residue',async()=>{
 });
 
 
-test('v0.1.8 verification performs and confirms the real ChatGPT Work page transition',async()=>{
+test('legacy page Work-control helper remains isolated from the v0.1.10 automatic state machine',async()=>{
  const background=await r('extension/background.js'); const content=await r('extension/content.js');
- assert.match(background,/GPTLOCK_VERIFY_ENTER_WORK_MODE/);
- assert.match(background,/source: 'verification_page_control'/);
- assert.match(background,/runtimeEnabled:/);
+ assert.doesNotMatch(background,/sendTabMessage\(tabId, \{ type: 'GPTLOCK_VERIFY_ENTER_WORK_MODE' \}\)/);
+ assert.match(background,/normal_work_policy_turn/);
  assert.match(content,/work_control_clicked_and_confirmed/);
- assert.match(content,/work_control_clicked_unconfirmed/);
- assert.match(content,/workMode: Boolean\(activeControl\)/);
 });
 
 
