@@ -1,1 +1,13 @@
-{"name":"@b8vipvip/modelpro","version":"0.1.0","type":"module","private":false,"scripts":{"test":"node --test"},"exports":{"./model-verification":"./src/model-verification.js"}}
+{
+  "name": "@b8vipvip/modelpro",
+  "version": "0.1.0",
+  "type": "module",
+  "private": false,
+  "scripts": {
+    "test": "node --test",
+    "test:windows-basic": "node ./scripts/windows-basic-test.mjs"
+  },
+  "exports": {
+    "./model-verification": "./src/model-verification.js"
+  }
+}
