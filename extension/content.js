@@ -165,6 +165,69 @@
     });
   }
 
+
+  function uiProbeSnapshot(stage = 'manual') {
+    const root = composerControlRegion();
+    const trigger = composerIntelligenceTrigger();
+    const picker = visibleIntelligencePickerContent();
+    const popups = typeof modelPopupScopes === 'function' ? modelPopupScopes() : [];
+    const selectorCompatibility = MODEL_SELECTORS.map((selector) => ({
+      selector,
+      total: document.querySelectorAll(selector).length,
+      visible: [...document.querySelectorAll(selector)].filter(visible).length,
+    }));
+    const rootControls = root
+      ? [...root.querySelectorAll('button,[role="button"],[role="menuitem"],[role="menuitemradio"],[role="radio"],[role="option"],[aria-haspopup],[data-testid],[data-model],[data-model-id]')]
+        .filter(visible)
+        .slice(0, 60)
+        .map(compactElementProbe)
+      : [];
+    const pageCandidates = [...document.querySelectorAll('button,[role="button"],[role="menuitem"],[role="menuitemradio"],[role="radio"],[role="option"],[aria-haspopup],[data-testid],[data-model],[data-model-id]')]
+      .filter((element) => {
+        if (!visible(element) || element.closest?.('#gptlock-indicator-host,#gptlock-verification-progress-host')) return false;
+        const values = elementTexts(element);
+        const attrs = [
+          element.getAttribute?.('data-testid'),
+          element.getAttribute?.('data-model'),
+          element.getAttribute?.('data-model-id'),
+          element.getAttribute?.('data-value'),
+          element.getAttribute?.('aria-label'),
+          element.getAttribute?.('title'),
+        ].filter(Boolean);
+        const combined = [...values, ...attrs].join(' ');
+        return Boolean(normalizeDisplayedModel(combined))
+          || /model|模型|gpt|astra|sol|terra|luna|thinking|reasoning|推理|思考/i.test(combined)
+          || element.getAttribute?.('aria-haspopup') === 'menu'
+          || element.getAttribute?.('aria-checked') === 'true'
+          || element.getAttribute?.('aria-selected') === 'true';
+      })
+      .slice(0, 100)
+      .map((element) => ({
+        ...compactElementProbe(element),
+        normalizedModel: elementTexts(element).map(normalizeDisplayedModel).find(Boolean) || null,
+      }));
+    const popupDetails = popups.slice(0, 8).map((scope) => ({
+      scope: compactElementProbe(scope),
+      rows: pickerProbeRows(scope).slice(0, 30),
+    }));
+    return {
+      schemaVersion: 1,
+      stage: String(stage || 'manual').slice(0, 100),
+      capturedAt: new Date().toISOString(),
+      href: location.href,
+      contextKind: location.pathname === '/' ? 'new-chat' : (location.pathname.startsWith('/c/') ? 'conversation' : 'other'),
+      observation: collectObservation(),
+      composerRoot: compactElementProbe(root),
+      trigger: compactElementProbe(trigger),
+      picker: compactElementProbe(picker),
+      pickerRows: pickerProbeRows(picker).slice(0, 30),
+      popups: popupDetails,
+      selectorCompatibility,
+      rootControls,
+      pageCandidates,
+    };
+  }
+
   let passivePickerObserver = null;
   let passivePickerFingerprint = '';
   const performanceTelemetry = {
@@ -2002,6 +2065,10 @@ document.addEventListener('pointerdown', (event) => {
         (error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }),
       );
       return true;
+    }
+    if (message?.type === 'MODELPRO_UI_PROBE_SNAPSHOT') {
+      sendResponse({ ok: true, snapshot: uiProbeSnapshot(message.stage || 'manual') });
+      return false;
     }
     if (message?.type === 'GPTLOCK_VERIFY_ACCOUNT_MODEL') {
       void verifyAccountModel(message).then(
