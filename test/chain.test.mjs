@@ -300,3 +300,26 @@ test('v0.1.38 keeps page-wide long tasks informational and clean detaches non-wa
  assert.match(background,/const monitorLevel = monitor\.attached \|\| \(!monitor\.error && !detachedWhileWaiting\) \? 'info' : 'warn';/);
  assert.match(background,/pageLongTaskObserved: details\.pageLongTaskObserved === true/);
 });
+
+
+test('v0.1.39 automates redesign probing against only the two default Chat models and auto exports',async()=>{
+ const [background,content,popupHtml,popupJs]=await Promise.all([
+   r('extension/background.js'),
+   r('extension/content.js'),
+   r('extension/popup.html'),
+   r('extension/popup.js'),
+ ]);
+ assert.match(background,/const targets = \['gpt-5\.5', 'gpt-5\.6-sol'\]/);
+ assert.match(background,/MODELPRO_UI_COMPAT_PROBE/);
+ assert.match(background,/runUiCompatibilityProbe/);
+ assert.match(background,/model_element_test_completed/);
+ assert.match(background,/autoDownloadUiCompatibilityLog/);
+ assert.match(background,/ui-probe-/);
+ assert.match(content,/MODELPRO_UI_PROBE_SNAPSHOT/);
+ assert.match(content,/function uiProbeSnapshot/);
+ assert.match(content,/selectorCompatibility/);
+ assert.match(content,/pageCandidates/);
+ assert.match(popupHtml,/id="probe"/);
+ assert.match(popupJs,/MODELPRO_UI_COMPAT_PROBE/);
+ assert.match(popupJs,/LOG 已自动导出/);
+});

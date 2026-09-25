@@ -32,7 +32,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.38';
+const RUNTIME_CODE_VERSION = '0.1.39';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -2242,6 +2242,193 @@ async function persistModelVerificationHistory(tabId, autoVerification) {
   return record;
 }
 
+
+async function captureUiCompatibilitySnapshot(tabId, stage) {
+  try {
+    const response = await sendTabMessage(tabId, { type: 'MODELPRO_UI_PROBE_SNAPSHOT', stage });
+    const snapshot = response?.snapshot ?? null;
+    logRuntime(snapshot ? 'info' : 'warn', 'ui-probe', 'snapshot_captured', {
+      tabId,
+      stage,
+      snapshot,
+    });
+    return snapshot;
+  } catch (error) {
+    logRuntime('warn', 'ui-probe', 'snapshot_failed', { tabId, stage, error: errorText(error) });
+    return { stage, error: errorText(error) };
+  }
+}
+
+async function autoDownloadUiCompatibilityLog(report) {
+  const bundle = await createDiagnosticBundle({ entryLimit: 2000 });
+  const payload = {
+    ...bundle,
+    uiCompatibilityProbe: sanitizeLogValue(report),
+  };
+  const json = JSON.stringify(payload, null, 2);
+  const filename = 'ModelPro-v' + RUNTIME_CODE_VERSION + '-ui-probe-' + new Date().toISOString().replace(/[:.]/g, '-') + '.log';
+  const url = 'data:application/json;charset=utf-8,' + encodeURIComponent(json);
+  const downloadId = await chrome.downloads.download({ url, filename, saveAs: false });
+  logRuntime('info', 'ui-probe', 'probe_log_downloaded', {
+    filename,
+    downloadId,
+    runtimeLogCount: bundle.runtimeLogs?.length ?? 0,
+  });
+  return { filename, downloadId };
+}
+
+async function runUiCompatibilityProbe(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!isChatGptUrl(tab.url ?? '')) throw new Error('Open chatgpt.com first / 请先打开 chatgpt.com');
+  const state = ensureTabState(tabId, tab.url);
+  await Promise.all([clearRuntimeLogs(), clearAutoVerificationStreamCapture()]);
+
+  const startedAt = new Date().toISOString();
+  const targets = ['gpt-5.5', 'gpt-5.6-sol'];
+  const report = {
+    schemaVersion: 1,
+    type: 'modelpro-chatgpt-redesign-ui-probe',
+    startedAt,
+    completedAt: null,
+    tabId,
+    pageContext: /^https:\/\/chatgpt\.com\/c\/[^/?#]+/i.test(tab.url || '') ? 'existing_chat' : 'new_chat',
+    targets,
+    originalPageModel: null,
+    snapshots: [],
+    catalogs: [],
+    results: [],
+    restoredModel: null,
+    success: false,
+    autoLogDownload: null,
+  };
+
+  logRuntime('info', 'ui-probe', 'probe_started', {
+    tabId,
+    pageContext: report.pageContext,
+    targets,
+  });
+
+  await collectPageObservation(tabId, state);
+  report.originalPageModel = normalizeConcreteModelId(state.pageObservation?.model);
+  report.snapshots.push(await captureUiCompatibilitySnapshot(tabId, 'initial'));
+
+  let catalog = await discoverAccountCatalog(tabId);
+  report.catalogs.push({
+    stage: 'initial-discovery',
+    models: catalog.models,
+    pickerMode: catalog.pickerMode ?? null,
+    rows: catalog.rows,
+  });
+  report.snapshots.push(await captureUiCompatibilitySnapshot(tabId, 'after-initial-discovery'));
+
+  for (const target of targets) {
+    let row = (catalog.rows || []).find((item) => normalizeConcreteModelId(item?.model || item?.rawId) === target);
+    if (!row) {
+      catalog = await discoverAccountCatalog(tabId);
+      report.catalogs.push({
+        stage: 'rediscovery-before-' + target,
+        models: catalog.models,
+        pickerMode: catalog.pickerMode ?? null,
+        rows: catalog.rows,
+      });
+      row = (catalog.rows || []).find((item) => normalizeConcreteModelId(item?.model || item?.rawId) === target);
+    }
+
+    const result = {
+      model: target,
+      discovered: Boolean(row),
+      selectorKey: row?.selectorKey ?? null,
+      label: row?.label ?? null,
+      pickerMode: row?.pickerMode ?? catalog.pickerMode ?? null,
+      selectionAttempted: false,
+      selectionError: null,
+      pageModelAfterSelection: null,
+      targetStillDiscoverableAfterSelection: false,
+      postCatalogModels: [],
+    };
+    report.snapshots.push(await captureUiCompatibilitySnapshot(tabId, 'before-select-' + target));
+
+    if (row) {
+      try {
+        const selectionResponse = await sendTabMessage(tabId, {
+          type: 'GPTLOCK_VERIFY_ACCOUNT_MODEL',
+          model: target,
+          selectorKey: row.selectorKey,
+          label: row.label,
+        });
+        const selection = selectionResponse?.result || {};
+        result.selectionAttempted = selection.selectionAttempted === true;
+        result.selectionObservation = selection.observation || null;
+      } catch (error) {
+        result.selectionError = errorText(error);
+      }
+    } else {
+      result.selectionError = 'target_not_discovered';
+    }
+
+    await sleep(900);
+    const after = await captureUiCompatibilitySnapshot(tabId, 'after-select-' + target);
+    report.snapshots.push(after);
+    result.pageModelAfterSelection = normalizeConcreteModelId(after?.observation?.model);
+
+    const postCatalog = await discoverAccountCatalog(tabId);
+    report.catalogs.push({
+      stage: 'post-selection-' + target,
+      models: postCatalog.models,
+      pickerMode: postCatalog.pickerMode ?? null,
+      rows: postCatalog.rows,
+    });
+    result.postCatalogModels = postCatalog.models;
+    result.targetStillDiscoverableAfterSelection = postCatalog.models.includes(target);
+    catalog = postCatalog;
+    report.results.push(result);
+
+    logRuntime(result.selectionAttempted ? 'info' : 'warn', 'ui-probe', 'model_element_test_completed', {
+      tabId,
+      ...result,
+    });
+  }
+
+  const restoreModel = report.originalPageModel && targets.includes(report.originalPageModel)
+    ? report.originalPageModel
+    : null;
+  if (restoreModel) {
+    const restoreCatalog = await discoverAccountCatalog(tabId);
+    const restoreRow = (restoreCatalog.rows || []).find((item) => normalizeConcreteModelId(item?.model || item?.rawId) === restoreModel);
+    if (restoreRow) {
+      try {
+        const response = await sendTabMessage(tabId, {
+          type: 'GPTLOCK_VERIFY_ACCOUNT_MODEL',
+          model: restoreModel,
+          selectorKey: restoreRow.selectorKey,
+          label: restoreRow.label,
+        });
+        if (response?.result?.selectionAttempted === true) report.restoredModel = restoreModel;
+      } catch {}
+    }
+  }
+
+  report.snapshots.push(await captureUiCompatibilitySnapshot(tabId, 'final'));
+  report.completedAt = new Date().toISOString();
+  report.success = targets.every((target) => {
+    const item = report.results.find((entry) => entry.model === target);
+    return item?.discovered === true
+      && item?.selectionAttempted === true
+      && item?.targetStillDiscoverableAfterSelection === true;
+  });
+
+  logRuntime(report.success ? 'info' : 'warn', 'ui-probe', 'probe_completed', {
+    tabId,
+    success: report.success,
+    results: report.results,
+    originalPageModel: report.originalPageModel,
+    restoredModel: report.restoredModel,
+  });
+
+  report.autoLogDownload = await autoDownloadUiCompatibilityLog(report);
+  return report;
+}
+
 async function autoDownloadVerificationLog() {
   const bundle = await createDiagnosticBundle({ entryLimit: 2000 });
   const json = JSON.stringify(bundle, null, 2);
@@ -2930,6 +3117,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         logRuntime('info', 'verification', 'legacy_probe_reset', { tabId });
         await broadcastTabState(tabId);
         return publicTabState(state);
+      }
+      case 'MODELPRO_UI_COMPAT_PROBE': {
+        const tabId = await chatGptTabId(Number.isInteger(message.tabId) ? message.tabId : null);
+        if (tabId === null) throw new Error('No ChatGPT tab / 没有打开的 ChatGPT 标签页');
+        return runUiCompatibilityProbe(tabId);
       }
       case 'GPTLOCK_AUTO_VERIFY': {
         const tabId = await chatGptTabId(Number.isInteger(message.tabId) ? message.tabId : null);
