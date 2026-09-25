@@ -1169,6 +1169,24 @@ document.addEventListener('pointerdown', (event) => {
     ].filter(Boolean).join(' ')).toLowerCase().replace(/\s+/g, ' ').trim();
   }
 
+  function defaultChatDirectModelRows(picker) {
+    if (!picker || !visible(picker)) return [];
+    // 2026-09 ChatGPT redesign: the top-level composer menu itself now contains
+    // the two Chat models (GPT-5.6 Sol + GPT-5.5) AND an accessible "选择模型"
+    // control used to swap the slider view. Those model rows are authoritative;
+    // clicking the opener actually leaves the model list and makes discovery empty.
+    // Keep the older intelligence-picker contract isolated by requiring the exact
+    // current default Chat pair and excluding the legacy composer-intelligence root.
+    if (picker.matches?.('[data-testid="composer-intelligence-picker-content"]')) return [];
+    const rows = distinctModelRows(picker);
+    const models = new Set(rows.map((row) => rowModelDescriptor(row).model).filter(Boolean));
+    if (models.size !== 2 || !models.has('gpt-5.5') || !models.has('gpt-5.6-sol')) return [];
+    return rows.filter((row) => {
+      const model = rowModelDescriptor(row).model;
+      return model === 'gpt-5.5' || model === 'gpt-5.6-sol';
+    });
+  }
+
   function advancedPickerView(picker) {
     return picker?.querySelector?.('[data-testid="composer-model-picker-slider-advanced-view"]') || null;
   }
@@ -1274,6 +1292,32 @@ document.addEventListener('pointerdown', (event) => {
     // B = intelligence slider/advanced picker with a nested account model catalog.
     // Detect the structure that is actually open so a verification turn may migrate
     // A -> B or B -> A without treating reasoning controls as model rows.
+    // The current redesigned Chat picker already exposes the authoritative default
+    // Chat rows in this first popup. The same popup also contains a "选择模型"
+    // menuitem for changing slider/view state, so opener presence alone is no longer
+    // evidence that another catalog layer must be opened.
+    const redesignedDirectRows = defaultChatDirectModelRows(picker);
+    if (redesignedDirectRows.length === 2) {
+      pickerTopologyProbe('picker-mode-a-redesigned-direct-chat-list', {
+        pageContext,
+        pickerMode: 'A',
+        ownedPicker: compactElementProbe(picker),
+        modelRows: redesignedDirectRows.map((row) => ({
+          element: compactElementProbe(row),
+          descriptor: rowModelDescriptor(row),
+        })),
+      });
+      return {
+        trigger,
+        picker,
+        opener: null,
+        submenu: picker,
+        rows: redesignedDirectRows,
+        pageContext,
+        pickerMode: 'A',
+      };
+    }
+
     const initialOpener = modelSubmenuOpener(picker);
     const initialAdvanced = advancedPickerToggle(picker);
     if (!initialOpener && !initialAdvanced) {
@@ -1502,18 +1546,32 @@ document.addEventListener('pointerdown', (event) => {
       return desired && collectObservation().model === desired;
     }, 3500, 100);
     const observation = collectObservation();
-    pointerTrace(confirmed ? 'verification_model_selection_confirmed' : 'verification_model_selection_unconfirmed', {
-      source: 'owned-semantic-row',
-      desired,
-      selectorKey: wantedKey,
-      label: wantedLabel,
-      observation,
-    });
-    if (!confirmed) {
+    const networkDeferred = !confirmed
+      && modern.pickerMode === 'A'
+      && (desired === 'gpt-5.5' || desired === 'gpt-5.6-sol');
+    pointerTrace(
+      confirmed
+        ? 'verification_model_selection_confirmed'
+        : networkDeferred
+          ? 'verification_model_selection_deferred_to_network'
+          : 'verification_model_selection_unconfirmed',
+      {
+        source: 'owned-semantic-row',
+        desired,
+        selectorKey: wantedKey,
+        label: wantedLabel,
+        pickerMode: modern.pickerMode || null,
+        observation,
+      },
+    );
+    if (!confirmed && !networkDeferred) {
       await closeModelMenus(modern.trigger);
-      return { attempted: false, observation };
+      return { attempted: false, observation, uiConfirmed: false };
     }
-    return { attempted: true, observation };
+    // On the redesigned default Chat picker the Sol selection may collapse back to
+    // a reasoning-only trigger text ("高"), so the closed-page DOM cannot prove the
+    // model. The subsequent Fetch/request evidence remains the terminal authority.
+    return { attempted: true, observation, uiConfirmed: confirmed };
   }
 
   async function chooseExact(triggerSelectors, desired, normalize, { skipModern = false } = {}) {

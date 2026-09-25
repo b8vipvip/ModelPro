@@ -323,3 +323,24 @@ test('v0.1.39 automates redesign probing against only the two default Chat model
  assert.match(popupJs,/MODELPRO_UI_COMPAT_PROBE/);
  assert.match(popupJs,/LOG 已自动导出/);
 });
+
+
+test('v0.1.40 treats redesigned default Chat pair as authoritative first-layer rows',async()=>{
+ const content=await r('extension/content.js');
+ assert.match(content,/function defaultChatDirectModelRows/);
+ assert.match(content,/models\.has\('gpt-5\.5'\)/);
+ assert.match(content,/models\.has\('gpt-5\.6-sol'\)/);
+ assert.match(content,/picker-mode-a-redesigned-direct-chat-list/);
+ const open=content.slice(content.indexOf('async function openModernModelMenu'),content.indexOf('function rowModelDescriptor'));
+ const redesigned=open.indexOf('const redesignedDirectRows = defaultChatDirectModelRows\(picker\)');
+ const opener=open.indexOf('const initialOpener = modelSubmenuOpener\(picker\)');
+ assert.ok(redesigned>=0 && opener>redesigned,'redesigned direct-pair authority must run before nested opener logic');
+});
+
+test('v0.1.40 lets network evidence finish Sol selection when redesigned closed DOM hides model name',async()=>{
+ const content=await r('extension/content.js');
+ assert.match(content,/verification_model_selection_deferred_to_network/);
+ assert.match(content,/modern\.pickerMode === 'A'/);
+ assert.match(content,/desired === 'gpt-5\.5' \|\| desired === 'gpt-5\.6-sol'/);
+ assert.match(content,/return \{ attempted: true, observation, uiConfirmed: confirmed \}/);
+});
