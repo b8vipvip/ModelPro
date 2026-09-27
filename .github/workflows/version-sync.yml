@@ -1,0 +1,52 @@
+name: Version Sync
+
+on:
+  push:
+    branches-ignore:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - name: Sync runtime/package version to manifest
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const manifestPath = 'extension/manifest.json';
+          const backgroundPath = 'extension/background.js';
+          const packagePath = 'package.json';
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          const version = String(manifest.version || '').trim();
+          if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Invalid manifest version: ' + version);
+          let background = fs.readFileSync(backgroundPath, 'utf8');
+          const replaced = background.replace(/const RUNTIME_CODE_VERSION = '[^']+';/, `const RUNTIME_CODE_VERSION = '${version}';`);
+          if (replaced === background && !background.includes(`const RUNTIME_CODE_VERSION = '${version}';`)) {
+            throw new Error('RUNTIME_CODE_VERSION marker not found');
+          }
+          fs.writeFileSync(backgroundPath, replaced);
+          const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+          pkg.version = version;
+          fs.writeFileSync(packagePath, JSON.stringify(pkg));
+          NODE
+      - name: Commit synchronized version
+        shell: bash
+        run: |
+          if git diff --quiet -- extension/background.js package.json; then
+            echo "Version already synchronized"
+            exit 0
+          fi
+          VERSION="$(node -p "require('./extension/manifest.json').version")"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add extension/background.js package.json
+          git commit -m "chore: sync ModelPro runtime version v${VERSION}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
