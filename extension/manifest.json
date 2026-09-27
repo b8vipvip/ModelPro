@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ModelPro",
-  "version": "0.1.41",
+  "version": "0.1.42",
   "description": "Standalone GPTWork model-verification chain diagnostic extension.",
   "minimum_chrome_version": "110",
   "permissions": [
@@ -28,6 +28,7 @@
       "js": [
         "page-model-evidence.js",
         "astra-model-evidence.js",
+        "composer-send-compat.js",
         "content.js",
         "model-catalog.js"
       ],
