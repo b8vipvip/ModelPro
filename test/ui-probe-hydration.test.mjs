@@ -4,15 +4,15 @@ import test from 'node:test';
 
 const r=(path)=>readFile(new URL('../'+path,import.meta.url),'utf8');
 
-test('v0.1.41 owns fresh-tab activation and hydration in background',async()=>{
- const [background,popup]=await Promise.all([r('extension/background.js'),r('extension/popup.js')]);
- assert.match(background,/async function runFreshUiCompatibilityProbe\(\)/);
- assert.match(background,/chrome\.tabs\.create\(\{ url: 'https:\/\/chatgpt\.com\/', active: true \}\)/);
- assert.match(background,/async function waitForUiProbeHydration\(tabId/);
- assert.match(background,/snapshot\?\.trigger/);
- assert.match(background,/MODELPRO_UI_COMPAT_PROBE_FRESH/);
- assert.match(background,/uiCompatibilityProbeTask/);
- assert.match(background,/targets\.every\(\(target\) => catalog\.models\.includes\(target\)\)/);
- assert.match(popup,/MODELPRO_UI_COMPAT_PROBE_FRESH/);
- assert.doesNotMatch(popup,/freshChatProbeTab/);
+test('fresh-chat UI probe activates the new tab only after a persistent runner is armed',async()=>{
+ const popup=await r('extension/popup.js');
+ assert.match(popup,/async function armFreshProbe\(tabId\)/);
+ assert.match(popup,/chrome\.scripting\.executeScript/);
+ assert.match(popup,/__MODELPRO_FRESH_UI_PROBE_ARMED__/);
+ assert.match(popup,/选择 ChatGPT 模型/);
+ assert.match(popup,/MODELPRO_UI_COMPAT_PROBE/);
+ assert.match(popup,/chrome\.tabs\.update\(t\.id,\{active:true\}\)/);
+ const arm=popup.indexOf('await armFreshProbe(t.id)');
+ const activate=popup.indexOf("chrome.tabs.update(t.id,{active:true})");
+ assert.ok(arm>=0 && activate>arm,'persistent probe runner must be armed before activating the fresh tab');
 });
