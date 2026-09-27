@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const r=(path)=>readFile(new URL('../'+path,import.meta.url),'utf8');
 
-test('v0.1.41 fresh probe continues into full network verification only after UI success',async()=>{
+test('fresh probe continues into full network verification only after UI success',async()=>{
   const [popup,html,manifestText,packageText,background]=await Promise.all([
     r('extension/popup.js'),
     r('extension/popup.html'),
@@ -14,9 +14,8 @@ test('v0.1.41 fresh probe continues into full network verification only after UI
   ]);
   const manifest=JSON.parse(manifestText);
   const pkg=JSON.parse(packageText);
-  assert.equal(manifest.version,'0.1.41');
-  assert.equal(pkg.version,'0.1.41');
-  assert.match(background,/const RUNTIME_CODE_VERSION = '0\.1\.41';/);
+  assert.equal(pkg.version,manifest.version);
+  assert.match(background,new RegExp(`const RUNTIME_CODE_VERSION = '${manifest.version.replace(/\./g,'\\.')}'`));
   assert.match(popup,/MODELPRO_UI_COMPAT_PROBE/);
   assert.match(popup,/ui\?\.data\?\.success!==true/);
   assert.match(popup,/GPTLOCK_AUTO_VERIFY/);
