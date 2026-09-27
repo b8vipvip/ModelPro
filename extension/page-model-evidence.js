@@ -4,11 +4,21 @@
 
   const MODEL_ALIASES = Object.freeze({
     'gpt-5.6-sol-wm': 'gpt-5.6-sol',
+    'gpt-5.6-terra-wm': 'gpt-5.6-terra',
+    'gpt-5.6-luna-wm': 'gpt-5.6-luna',
+    'gpt-6-astra-wm': 'gpt-6-astra',
+    'gpt-6-sol-wm': 'gpt-6-sol',
+    'gpt-6-luna-wm': 'gpt-6-luna',
     'gpt-5-6': 'gpt-5.6-sol',
   });
   const FAMILY_ALIASES = Object.freeze({
     'gpt-5.6-sol': ['gpt-5.6 sol', 'gpt 5.6 sol', '5.6 sol'],
+    'gpt-5.6-terra': ['gpt-5.6 terra', 'gpt 5.6 terra', '5.6 terra'],
+    'gpt-5.6-luna': ['gpt-5.6 luna', 'gpt 5.6 luna', '5.6 luna'],
     'gpt-5.5': ['gpt-5.5', 'gpt 5.5', '5.5'],
+    'gpt-6-astra': ['gpt-6 astra', 'gpt 6 astra', '6 astra'],
+    'gpt-6-sol': ['gpt-6 sol', 'gpt 6 sol', '6 sol'],
+    'gpt-6-luna': ['gpt-6 luna', 'gpt 6 luna', '6 luna'],
   });
   const REASONING_ALIASES = Object.freeze({
     'extra-high': ['extra high', 'extra-high', 'xhigh', '超高'],
@@ -120,11 +130,8 @@
     }
 
     const compact = text.replace(/\s+/g, '-');
-    // Visible DOM text is advisory only.  Recognize the established Sol family
-    // explicitly, otherwise fall back to the base GPT family.  Do not turn
-    // arbitrary trailing UI text (for example "Solji"/"Solmo") into a model ID.
-    const compactSol = compact.match(/(?:^|[^a-z0-9])(?:gpt-)?(\d+(?:\.\d+)*)-sol(?:-wm)?(?:$|[^a-z0-9])/);
-    if (compactSol) return normalizeModelId(`gpt-${compactSol[1]}-sol`);
+    const compactTier = compact.match(/(?:^|[^a-z0-9])(?:gpt-)?(\d+(?:\.\d+)*)-(astra|pro|sol|terra|luna)(?:-wm)?(?:$|[^a-z0-9])/);
+    if (compactTier) return normalizeModelId(`gpt-${compactTier[1]}-${compactTier[2]}`);
     const explicit = compact.match(/(?:^|[^a-z0-9])gpt-?(\d+(?:\.\d+)*)(?=$|[^a-z0-9.])/);
     return explicit ? normalizeModelId(`gpt-${explicit[1]}`) : null;
   }
@@ -177,6 +184,88 @@
       .filter((item) => item.model || item.reasoning);
   }
 
+  function composerModelTrigger(root = composerRoot()) {
+    if (!root) return null;
+    return [...root.querySelectorAll("button[aria-haspopup='menu'],[role='button'][aria-haspopup='menu']")]
+      .filter(visible)
+      .find((element) => /(?:select|choose).*model|model.*selector|选择.*模型|模型.*选择/i.test(
+        String(element.getAttribute?.('aria-label') || element.getAttribute?.('title') || ''),
+      )) || null;
+  }
+
+  function redesignedDefaultChatEvidence() {
+    const root = composerRoot();
+    const trigger = composerModelTrigger(root);
+    if (!trigger) return null;
+
+    const triggerValues = evidenceValues(trigger);
+    const triggerModelValue = triggerValues.find((value) => modelFromText(value));
+    if (triggerModelValue) {
+      return {
+        model: modelFromText(triggerModelValue),
+        source: 'composer-trigger',
+        label: triggerModelValue,
+        inferred: false,
+      };
+    }
+
+    const triggerText = normalizeLabel(trigger.innerText || trigger.textContent || '');
+    const expanded = trigger.getAttribute?.('aria-expanded') === 'true';
+    if (!expanded) {
+      const reasoning = reasoningFromText(triggerText);
+      if (reasoning) {
+        // 2026-09 default Chat redesign hides the default Sol family and renders only
+        // its reasoning level (for example "高"). GPT-5.5 renders "5.5 高", so a
+        // closed, reasoning-only model trigger is the stable signature of default Sol.
+        return {
+          model: 'gpt-5.6-sol',
+          source: 'composer-redesign-default-sol',
+          label: triggerText,
+          inferred: true,
+        };
+      }
+      return null;
+    }
+
+    const controlledId = trigger.getAttribute?.('aria-controls') || '';
+    const popup = controlledId ? document.getElementById(controlledId) : null;
+    if (!popup || !visible(popup)) return null;
+    const popupText = normalizeLabel(popup.innerText || popup.textContent || '');
+    const hasSol = FAMILY_ALIASES['gpt-5.6-sol'].some((alias) => aliasMatches(popupText, alias));
+    const has55 = FAMILY_ALIASES['gpt-5.5'].some((alias) => aliasMatches(popupText, alias));
+    if (!hasSol || !has55) return null;
+
+    const opener = [...popup.querySelectorAll("[role='menuitem'],button,[role='button']")]
+      .filter(visible)
+      .find((element) => /^(?:select model|choose model|选择模型|選擇模型|모델 선택)$/i.test(
+        String(element.getAttribute?.('aria-label') || element.getAttribute?.('title') || '').trim(),
+      ));
+    if (!opener) return null;
+    const openerValues = evidenceValues(opener);
+    const openerModelValue = openerValues.find((value) => modelFromText(value));
+    if (openerModelValue) {
+      return {
+        model: modelFromText(openerModelValue),
+        source: 'open-picker-summary',
+        label: openerModelValue,
+        inferred: false,
+      };
+    }
+    const openerText = normalizeLabel(opener.innerText || opener.textContent || '');
+    if (reasoningFromText(openerText)) {
+      // In the same redesigned pair, a reasoning-only summary means the default Sol
+      // row is selected. This lets diagnostics confirm the selection before the menu
+      // is closed, without depending on a removed aria-checked/data-state marker.
+      return {
+        model: 'gpt-5.6-sol',
+        source: 'open-picker-default-sol',
+        label: openerText,
+        inferred: true,
+      };
+    }
+    return null;
+  }
+
   function modelEvidence() {
     const root = composerRoot() || document;
     const rows = [];
@@ -199,11 +288,6 @@
       }
     }
 
-    // ChatGPT commonly exposes the current family only as visible text on the
-    // compact composer pill while aria-label/title remain generic (for example,
-    // aria-label="Model selector" with visible text "5.6 Sol 高").  Keep all
-    // text/attribute values from the validated chat2api composer controls so the
-    // visible model name is not lost just because a generic aria-label exists.
     for (const item of modelReasoningControls()) {
       if (item.model) {
         rows.push({
@@ -233,6 +317,20 @@
         candidates: models,
       };
     }
+
+    if (effectiveModels.length === 0) {
+      const redesigned = redesignedDefaultChatEvidence();
+      if (redesigned?.model) {
+        return {
+          model: redesigned.model,
+          source: redesigned.source,
+          label: redesigned.label || '',
+          ambiguous: false,
+          candidates: [redesigned.model],
+        };
+      }
+    }
+
     return {
       model: null,
       source: effectiveModels.length > 1 ? 'ambiguous-dom' : 'none',
@@ -270,7 +368,7 @@
   }
 
   globalThis[KEY] = Object.freeze({
-    version: '1.1.0',
+    version: '1.2.0',
     composerRoot,
     evidenceValues,
     labelOf,
