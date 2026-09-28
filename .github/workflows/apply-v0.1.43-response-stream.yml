@@ -1,0 +1,82 @@
+name: Apply v0.1.43 response stream patch
+
+on:
+  push:
+    branches:
+      - fix/v0.1.43-aborted-response-stream
+    paths:
+      - .github/workflows/apply-v0.1.43-response-stream.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - name: Patch response capture for aborted 200 streams
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import json
+
+          p=Path('extension/network-monitor.js')
+          s=p.read_text()
+          s=s.replace("const PROVISIONAL_STREAM_WINDOW_MS = 12 * 1000;\n", "const PROVISIONAL_STREAM_WINDOW_MS = 12 * 1000;\nconst RESPONSE_STREAM_CAPTURE_MAX_BYTES = 4 * 1024 * 1024;\n")
+          anchor="""function encodeUtf8Base64(value) {\n  const bytes = new TextEncoder().encode(String(value));\n  let binary = '';\n  const chunkSize = 0x8000;\n  for (let offset = 0; offset < bytes.length; offset += chunkSize) {\n    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));\n  }\n  return btoa(binary);\n}\n"""
+          helper="""function encodeUtf8Base64(value) {\n  const bytes = new TextEncoder().encode(String(value));\n  let binary = '';\n  const chunkSize = 0x8000;\n  for (let offset = 0; offset < bytes.length; offset += chunkSize) {\n    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));\n  }\n  return btoa(binary);\n}\n\nfunction decodeBase64Chunks(chunks = []) {\n  const parts = [];\n  let total = 0;\n  for (const encoded of chunks) {\n    if (typeof encoded !== 'string' || !encoded) continue;\n    try {\n      const binary = atob(encoded);\n      const bytes = new Uint8Array(binary.length);\n      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);\n      parts.push(bytes);\n      total += bytes.length;\n    } catch {}\n  }\n  if (!total) return '';\n  const merged = new Uint8Array(total);\n  let offset = 0;\n  for (const part of parts) { merged.set(part, offset); offset += part.length; }\n  return new TextDecoder().decode(merged);\n}\n"""
+          if anchor not in s: raise SystemExit('encode helper anchor missing')
+          s=s.replace(anchor,helper,1)
+
+          old="""    } else if (method === 'Network.responseReceived') {\n      this.handleResponse(tabId, params);\n    } else if (method === 'Network.loadingFinished') {\n      await this.handleFinished(tabId, params);\n    } else if (method === 'Network.loadingFailed') {\n      this.handleFailed(tabId, params);\n"""
+          new="""    } else if (method === 'Network.responseReceived') {\n      await this.handleResponse(tabId, params);\n    } else if (method === 'Network.dataReceived') {\n      this.handleDataReceived(tabId, params);\n    } else if (method === 'Network.loadingFinished') {\n      await this.handleFinished(tabId, params);\n    } else if (method === 'Network.loadingFailed') {\n      await this.handleFailed(tabId, params);\n"""
+          if old not in s: raise SystemExit('event dispatch anchor missing')
+          s=s.replace(old,new,1)
+
+          old="""  handleResponse(tabId, params) {\n    const key = this.key(tabId, String(params.requestId));\n    let record = this.requests.get(key);\n    const mimeType = params.response?.mimeType ?? '';\n"""
+          new="""  appendResponseStreamChunk(record, encoded) {\n    if (!record || typeof encoded !== 'string' || !encoded || record.streamCaptureOverflowed) return;\n    const estimatedBytes = Math.floor((encoded.length * 3) / 4);\n    if ((record.streamCaptureBytes || 0) + estimatedBytes > RESPONSE_STREAM_CAPTURE_MAX_BYTES) {\n      record.streamCaptureOverflowed = true;\n      return;\n    }\n    if (!Array.isArray(record.streamChunks)) record.streamChunks = [];\n    record.streamChunks.push(encoded);\n    record.streamCaptureBytes = (record.streamCaptureBytes || 0) + estimatedBytes;\n  }\n\n  responseStreamBody(record) {\n    return decodeBase64Chunks(record?.streamChunks || []);\n  }\n\n  handleDataReceived(tabId, params) {\n    if (typeof params.data !== 'string' || !params.data) return;\n    const record = this.requests.get(this.key(tabId, String(params.requestId)));\n    if (!record?.streamCaptureStarted) return;\n    this.appendResponseStreamChunk(record, params.data);\n  }\n\n  async handleResponse(tabId, params) {\n    const key = this.key(tabId, String(params.requestId));\n    let record = this.requests.get(key);\n    const mimeType = params.response?.mimeType ?? '';\n"""
+          if old not in s: raise SystemExit('handleResponse anchor missing')
+          s=s.replace(old,new,1)
+
+          old="""    record.mimeType = mimeType;\n    record.responseHeaders = params.response?.headers ?? {};\n    record.status = params.response?.status ?? null;\n  }\n\n  async handleFinished(tabId, params) {\n"""
+          new="""    record.mimeType = mimeType;\n    record.responseHeaders = params.response?.headers ?? {};\n    record.status = params.response?.status ?? null;\n    if (record.responseVerificationEnabled && !record.streamCaptureStarted) {\n      record.streamCaptureStarted = true;\n      record.streamChunks = [];\n      record.streamCaptureBytes = 0;\n      record.streamCaptureOverflowed = false;\n      record.streamCaptureError = null;\n      try {\n        const streamed = await debuggerCall(\n          'sendCommand',\n          this.target(tabId),\n          'Network.streamResourceContent',\n          { requestId: record.requestId },\n        );\n        this.appendResponseStreamChunk(record, streamed?.bufferedData ?? '');\n      } catch (error) {\n        record.streamCaptureError = safeError(error);\n      }\n    }\n  }\n\n  async handleFinished(tabId, params) {\n"""
+          if old not in s: raise SystemExit('response status anchor missing')
+          s=s.replace(old,new,1)
+
+          old="""    } catch (error) {\n      bodyError = safeError(error);\n    }\n\n    const handoff = this.resolveFinishedHandoff(tabId, record, body);\n"""
+          new="""    } catch (error) {\n      bodyError = safeError(error);\n    }\n    const streamedBody = this.responseStreamBody(record);\n    if ((!body || bodyError) && streamedBody) {\n      body = streamedBody;\n      bodyError = null;\n    }\n\n    const handoff = this.resolveFinishedHandoff(tabId, record, body);\n"""
+          if old not in s: raise SystemExit('finished body anchor missing')
+          s=s.replace(old,new,1)
+
+          old="""      streamHandoff,\n      ...evidence.diagnostics,\n    };\n"""
+          new="""      streamHandoff,\n      streamCaptureBytes: record.streamCaptureBytes || 0,\n      streamCaptureOverflowed: record.streamCaptureOverflowed === true,\n      streamCaptureError: record.streamCaptureError || null,\n      ...evidence.diagnostics,\n    };\n"""
+          if old not in s: raise SystemExit('finished diagnostics anchor missing')
+          s=s.replace(old,new,1)
+
+          start=s.index("  handleFailed(tabId, params) {")
+          end=s.index("\n  handleWebSocketCreated(tabId, params) {", start)
+          replacement="""  async handleFailed(tabId, params) {\n    const key = this.key(tabId, String(params.requestId));\n    const record = this.requests.get(key);\n    if (!record) return;\n    this.requests.delete(key);\n    if (!record.responseVerificationEnabled) return;\n\n    const recoveredBody = this.responseStreamBody(record);\n    if (Boolean(params.canceled) && Number(record.status) === 200 && recoveredBody) {\n      const handoff = this.resolveFinishedHandoff(tabId, record, recoveredBody);\n      if (this.downstreamResponseMatchesHandoff(record, recoveredBody, handoff)) {\n        const evidence = extractResponseEvidence({\n          body: recoveredBody,\n          headers: record.responseHeaders,\n          mimeType: record.mimeType,\n        });\n        const streamHandoff = !record.downstream && handoff ? publicStreamHandoff(handoff) : null;\n        const streamContext = handoff\n          ? this.streamContext(handoff, {\n            isDownstream: Boolean(record.downstream),\n            transport: 'sse',\n            direction: 'received',\n            stage: record.downstream ? 'downstream_http_aborted' : 'initial_conversation_aborted',\n            matchBasis: record.matchBasis ?? (record.downstream ? 'handoff_marker' : 'formal_request'),\n          })\n          : null;\n        const diagnostics = {\n          endpoint: record.endpoint,\n          httpStatus: record.status,\n          transport: 'sse',\n          direction: 'received',\n          stage: record.downstream ? 'downstream_http_aborted' : 'initial_conversation_aborted',\n          terminalEvent: 'loadingFailed',\n          networkError: params.errorText || 'network_loading_failed',\n          streamHandoff,\n          streamCaptureBytes: record.streamCaptureBytes || 0,\n          streamCaptureOverflowed: record.streamCaptureOverflowed === true,\n          streamCaptureError: record.streamCaptureError || null,\n          ...evidence.diagnostics,\n        };\n        if (hasResponseMetadataEvidence(evidence)) {\n          this.onEvidence(tabId, {\n            requestId: record.requestId,\n            capturedAt: new Date().toISOString(),\n            status: record.status,\n            model: evidence.model,\n            defaultModel: evidence.defaultModel,\n            defaultModelField: evidence.defaultModelField,\n            reasoning: evidence.reasoning,\n            conflicts: evidence.conflicts,\n            fields: evidence.fields,\n            bodyError: null,\n            rawResponseBody: recoveredBody,\n            streamContext,\n            diagnostics,\n          });\n          return;\n        }\n        this.onStreamData?.(tabId, {\n          requestId: record.requestId,\n          capturedAt: new Date().toISOString(),\n          rawStreamData: recoveredBody,\n          diagnostics: { ...diagnostics, verificationSuppressedReason: 'aborted_partial_metadata_incomplete' },\n          streamContext,\n        });\n      }\n    }\n\n    this.onFailure(tabId, {\n      requestId: record.requestId,\n      error: params.errorText || 'network_loading_failed',\n      canceled: Boolean(params.canceled),\n      endpoint: record.endpoint,\n      httpStatus: record.status,\n      downstream: Boolean(record.downstream),\n    });\n  }\n"""
+          s=s[:start]+replacement+s[end:]
+          p.write_text(s)
+
+          manifest_path=Path('extension/manifest.json')
+          manifest=json.loads(manifest_path.read_text())
+          manifest['version']='0.1.43'
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2)+'\n')
+
+          test=Path('test/v0.1.43-aborted-response-stream.test.mjs')
+          test.write_text("""import assert from 'node:assert/strict';\nimport { readFile } from 'node:fs/promises';\nimport test from 'node:test';\n\nconst r=(path)=>readFile(new URL('../'+path,import.meta.url),'utf8');\n\ntest('v0.1.43 recovers model evidence from canceled HTTP 200 response streams',async()=>{\n  const [monitor,manifestText]=await Promise.all([r('extension/network-monitor.js'),r('extension/manifest.json')]);\n  const manifest=JSON.parse(manifestText);\n  assert.equal(manifest.version,'0.1.43');\n  assert.match(monitor,/Network\\.streamResourceContent/);\n  assert.match(monitor,/Network\\.dataReceived/);\n  assert.match(monitor,/handleDataReceived\\(tabId, params\\)/);\n  assert.match(monitor,/Boolean\\(params\\.canceled\\) && Number\\(record\\.status\\) === 200 && recoveredBody/);\n  assert.match(monitor,/terminalEvent: 'loadingFailed'/);\n  assert.match(monitor,/initial_conversation_aborted/);\n  assert.match(monitor,/this\\.onEvidence\\(tabId/);\n  assert.match(monitor,/streamCaptureBytes/);\n});\n""")
+          PY
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add extension/network-monitor.js extension/manifest.json test/v0.1.43-aborted-response-stream.test.mjs
+          git commit -m "v0.1.43: recover evidence from aborted response streams"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
