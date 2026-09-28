@@ -1,0 +1,200 @@
+name: Apply v0.1.44 hidden Work profile patch
+
+on:
+  push:
+    branches:
+      - fix/v0.1.44-redesign-hidden-work-profiles
+    paths:
+      - .github/workflows/apply-v0.1.44-hidden-work.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - name: Patch redesigned hidden Work verification
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('extension/background.js')
+          s = path.read_text(encoding='utf-8')
+
+          def rep(old, new, label):
+              global s
+              if old not in s:
+                  raise SystemExit(f'missing patch anchor: {label}')
+              s = s.replace(old, new, 1)
+
+          rep(
+              "const JANK_ISOLATION_KEY = 'gptworkJankIsolationV1';\n\nlet nativePort = null;",
+              "const JANK_ISOLATION_KEY = 'gptworkJankIsolationV1';\nconst REDESIGNED_HIDDEN_WORK_PROFILES = Object.freeze([\n  { model: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },\n  { model: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },\n  { model: 'gpt-6-astra', label: 'GPT-6 Astra' },\n  { model: 'gpt-6-luna', label: 'GPT-6 Luna' },\n  { model: 'gpt-6-sol', label: 'GPT-6 Sol' },\n]);\n\nlet nativePort = null;",
+              'hidden Work profile catalog',
+          )
+
+          rep(
+              "          existing.label = label || existing.label;\n        }\n        continue;",
+              "          existing.label = label || existing.label;\n          existing.transportOnly = existing.transportOnly || row?.transportOnly === true;\n          existing.discoverySource = String(row?.discoverySource || existing.discoverySource || '').slice(0, 80);\n        }\n        continue;",
+              'catalog refresh transport metadata',
+          )
+
+          rep(
+              "      queue.push({ model, rawModel, selectorKey, label, pickerMode: ['A', 'B'].includes(row?.pickerMode) ? row.pickerMode : catalog?.pickerMode || null });",
+              "      queue.push({\n        model, rawModel, selectorKey, label,\n        pickerMode: ['A', 'B'].includes(row?.pickerMode) ? row.pickerMode : catalog?.pickerMode || null,\n        transportOnly: row?.transportOnly === true,\n        discoverySource: String(row?.discoverySource || phase || '').slice(0, 80),\n      });",
+              'catalog queue transport metadata',
+          )
+
+          rep(
+              "      let selectionResponse = await sendTabMessage(tabId, { type: 'GPTLOCK_VERIFY_ACCOUNT_MODEL', model: item.model, selectorKey: item.selectorKey, label: item.label });\n      let selection = selectionResponse?.result || {};",
+              "      let selectionResponse = null;\n      let selection = { selectionAttempted: false, observation: state.pageObservation || null };\n      if (item.transportOnly !== true) {\n        selectionResponse = await sendTabMessage(tabId, { type: 'GPTLOCK_VERIFY_ACCOUNT_MODEL', model: item.model, selectorKey: item.selectorKey, label: item.label });\n        selection = selectionResponse?.result || {};\n      }",
+              'transport-only selection bypass',
+          )
+
+          rep(
+              "      if (selection.selectionAttempted !== true) throw new Error('Model selection control was not activated');",
+              "      if (item.transportOnly !== true && selection.selectionAttempted !== true) throw new Error('Model selection control was not activated');\n      if (item.transportOnly === true) {\n        logRuntime('info', 'verification', 'verification_hidden_work_transport_probe', {\n          tabId, model: item.model, discoverySource: item.discoverySource || 'work-response-default-model',\n        });\n      }",
+              'transport-only selection authority',
+          )
+
+          rep(
+              "        selected: selection.selectionAttempted === true, requestConfirmed, responseConfirmed,",
+              "        selected: selection.selectionAttempted === true, transportOnly: item.transportOnly === true, requestConfirmed, responseConfirmed,",
+              'transport-only result field',
+          )
+
+          rep(
+              "        // Do not reload/stop/recover this bootstrap turn. A failed product Work request\n        // is evidence that the transition did not happen; recovery must not become a\n        // second authority that mutates the page.\n        let workCatalog = null;",
+              "        // Do not reload/stop/recover this bootstrap turn. A failed product Work request\n        // is evidence that the transition did not happen; recovery must not become a\n        // second authority that mutates the page. The redesigned composer no longer\n        // exposes Picker B, so retain the bootstrap response before DOM discovery. An\n        // exact Work default_model_slug is response-side authority that Work transport\n        // really activated even when the visible picker remains the two-row Chat list.\n        const activationRewrite = state.lastRewrite;\n        const activationResponseEvidence = state.lastResponseEvidence;\n        const activationTarget = normalizeConcreteModelId(activationRewrite?.modelAfter);\n        const activationDefaultModel = normalizeConcreteModelId(activationResponseEvidence?.defaultModel);\n        const activationResponseMatchesRequest = Boolean(\n          activationRewrite?.requestId\n            && activationResponseEvidence?.requestId\n            && activationRewrite.requestId === activationResponseEvidence.requestId\n        );\n        const responseConfirmedWorkProfile = Boolean(\n          activationSettled?.settled === true\n            && activationRewrite?.authorityKind === 'normal-policy'\n            && activationTarget\n            && modelTransportId(activationTarget) !== activationTarget\n            && activationDefaultModel === activationTarget\n            && activationResponseMatchesRequest\n        );\n        let workCatalog = null;",
+              'capture Work bootstrap response authority',
+          )
+
+          old_transition = """        const entered = activationSettled?.settled === true && workCatalog?.pickerMode === 'B';
+        const addedFromB = entered ? mergeCatalog(workCatalog, 'work-picker-b') : 0;
+        progress.workDiscovery = {
+          attempted: true,
+          entered,
+          reason: entered ? 'normal_work_turn_picker_b_observed'
+            : activationSettled?.interrupted === true ? 'normal_work_turn_interrupted'
+              : activationSettled?.settled === true ? 'picker_b_not_observed'
+                : 'normal_work_turn_not_settled',
+          runtimeEnabled: true,
+          source: 'normal_work_policy_request',
+          pickerMode: workCatalog?.pickerMode ?? null,
+          added: addedFromB,
+        };
+        logRuntime(entered ? 'info' : 'warn', 'verification', 'verification_work_mode_transition', {
+          tabId, phase: 'post_gpt_5_6_sol', entered,
+          source: 'normal_work_policy_request',
+          reason: progress.workDiscovery.reason,
+          pickerMode: workCatalog?.pickerMode ?? null,
+          added: addedFromB,
+        });
+        workActivationPending = false;
+        if (addedFromB) stablePasses = 0;
+"""
+          new_transition = """        const pickerBEntered = activationSettled?.settled === true && workCatalog?.pickerMode === 'B';
+        let addedFromWork = pickerBEntered ? mergeCatalog(workCatalog, 'work-picker-b') : 0;
+        let discoveryReason = pickerBEntered ? 'normal_work_turn_picker_b_observed' : null;
+        if (!pickerBEntered && responseConfirmedWorkProfile) {
+          addedFromWork += mergeCatalog({
+            pickerMode: null,
+            reasoningLevels: workCatalog?.reasoningLevels || [],
+            rows: REDESIGNED_HIDDEN_WORK_PROFILES.map((profile) => ({
+              ...profile,
+              rawId: profile.model,
+              selectorKey: '',
+              pickerMode: null,
+              transportOnly: true,
+              discoverySource: 'work-response-default-model',
+            })),
+          }, 'work-response-hidden');
+          discoveryReason = 'normal_work_turn_work_profile_confirmed_by_default_model';
+        }
+        const entered = pickerBEntered || responseConfirmedWorkProfile;
+        progress.workDiscovery = {
+          attempted: true,
+          entered,
+          reason: discoveryReason
+            || (activationSettled?.interrupted === true ? 'normal_work_turn_interrupted'
+              : activationSettled?.settled === true ? 'picker_b_not_observed_and_work_response_unconfirmed'
+                : 'normal_work_turn_not_settled'),
+          runtimeEnabled: true,
+          source: responseConfirmedWorkProfile && !pickerBEntered
+            ? 'normal_work_response_default_model'
+            : 'normal_work_policy_request',
+          pickerMode: workCatalog?.pickerMode ?? null,
+          added: addedFromWork,
+          activationTarget,
+          activationDefaultModel,
+          responseConfirmedWorkProfile,
+          hiddenTransportProfiles: responseConfirmedWorkProfile && !pickerBEntered
+            ? REDESIGNED_HIDDEN_WORK_PROFILES.map((profile) => profile.model)
+            : [],
+        };
+        logRuntime(entered ? 'info' : 'warn', 'verification', 'verification_work_mode_transition', {
+          tabId, phase: 'post_gpt_5_6_sol', entered,
+          source: progress.workDiscovery.source,
+          reason: progress.workDiscovery.reason,
+          pickerMode: workCatalog?.pickerMode ?? null,
+          added: addedFromWork,
+          activationTarget,
+          activationDefaultModel,
+          responseConfirmedWorkProfile,
+        });
+        workActivationPending = false;
+        if (addedFromWork) stablePasses = 0;
+"""
+          rep(old_transition, new_transition, 'redesigned Work transition fallback')
+
+          rep("const RUNTIME_CODE_VERSION = '0.1.43';", "const RUNTIME_CODE_VERSION = '0.1.44';", 'runtime version')
+          path.write_text(s, encoding='utf-8')
+
+          manifest = Path('extension/manifest.json')
+          m = manifest.read_text(encoding='utf-8')
+          if '"version": "0.1.43"' not in m:
+              raise SystemExit('missing manifest version anchor')
+          manifest.write_text(m.replace('"version": "0.1.43"', '"version": "0.1.44"', 1), encoding='utf-8')
+
+          package = Path('package.json')
+          pkg = package.read_text(encoding='utf-8')
+          if '"version":"0.1.43"' not in pkg:
+              raise SystemExit('missing package version anchor')
+          package.write_text(pkg.replace('"version":"0.1.43"', '"version":"0.1.44"', 1), encoding='utf-8')
+
+          test = Path('test/v0.1.44-redesign-hidden-work-profiles.test.mjs')
+          test.write_text("""import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+const r=(path)=>readFile(new URL('../'+path,import.meta.url),'utf8');
+
+test('redesigned Chat picker verifies hidden Work profiles from response authority',async()=>{
+  const [background,manifestText]=await Promise.all([r('extension/background.js'),r('extension/manifest.json')]);
+  const manifest=JSON.parse(manifestText);
+  assert.equal(manifest.version,'0.1.44');
+  for (const model of ['gpt-5.6-luna','gpt-5.6-terra','gpt-6-astra','gpt-6-luna','gpt-6-sol']) {
+    assert.match(background,new RegExp(model.replaceAll('.','\\\\.')));
+  }
+  assert.match(background,/REDESIGNED_HIDDEN_WORK_PROFILES/);
+  assert.match(background,/responseConfirmedWorkProfile/);
+  assert.match(background,/activationDefaultModel === activationTarget/);
+  assert.match(background,/normal_work_turn_work_profile_confirmed_by_default_model/);
+  assert.match(background,/verification_hidden_work_transport_probe/);
+  assert.match(background,/item\.transportOnly !== true && selection\.selectionAttempted !== true/);
+  assert.match(background,/const verified = Boolean\(requestId\) && requestConfirmed && responseConfirmed/);
+});
+""", encoding='utf-8')
+          PY
+          rm .github/workflows/apply-v0.1.44-hidden-work.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add extension/background.js extension/manifest.json package.json test/v0.1.44-redesign-hidden-work-profiles.test.mjs .github/workflows/apply-v0.1.44-hidden-work.yml
+          git commit -m "fix: verify redesigned hidden Work profiles from response metadata"
+          git push origin HEAD:${{ github.ref_name }}
