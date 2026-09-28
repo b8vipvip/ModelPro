@@ -3,13 +3,15 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 const r=p=>readFile(new URL('../'+p,import.meta.url),'utf8');
 
-test('v0.1.42 loads redesigned composer send compatibility before main content runtime',async()=>{
-  const [manifestText,compat]=await Promise.all([
+test('redesigned composer send compatibility loads before main content runtime',async()=>{
+  const [manifestText,packageText,compat]=await Promise.all([
     r('extension/manifest.json'),
+    r('package.json'),
     r('extension/composer-send-compat.js'),
   ]);
   const manifest=JSON.parse(manifestText);
-  assert.equal(manifest.version,'0.1.42');
+  const pkg=JSON.parse(packageText);
+  assert.equal(pkg.version,manifest.version);
   const scripts=manifest.content_scripts?.[0]?.js || [];
   const compatIndex=scripts.indexOf('composer-send-compat.js');
   const contentIndex=scripts.indexOf('content.js');
