@@ -13,6 +13,7 @@ const CDP_VERSION = '1.3';
 const REQUEST_TTL_MS = 15 * 60 * 1000;
 const STREAM_TTL_MS = 2 * 60 * 1000;
 const PROVISIONAL_STREAM_WINDOW_MS = 12 * 1000;
+const RESPONSE_STREAM_CAPTURE_MAX_BYTES = 4 * 1024 * 1024;
 const FETCH_PATTERNS = [
   { urlPattern: 'https://chatgpt.com/backend-api/conversation*', requestStage: 'Request' },
   { urlPattern: 'https://chatgpt.com/backend-api/f/conversation*', requestStage: 'Request' },
@@ -81,6 +82,26 @@ function encodeUtf8Base64(value) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
   }
   return btoa(binary);
+}
+
+function decodeBase64Chunks(chunks = []) {
+  const parts = [];
+  let total = 0;
+  for (const encoded of chunks) {
+    if (typeof encoded !== 'string' || !encoded) continue;
+    try {
+      const binary = atob(encoded);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      parts.push(bytes);
+      total += bytes.length;
+    } catch {}
+  }
+  if (!total) return '';
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) { merged.set(part, offset); offset += part.length; }
+  return new TextDecoder().decode(merged);
 }
 
 export function hasCompleteResponseEvidence(evidence) {
@@ -528,11 +549,13 @@ export class ChatGptNetworkMonitor {
     } else if (method === 'Network.requestWillBeSent') {
       await this.handleRequest(tabId, params);
     } else if (method === 'Network.responseReceived') {
-      this.handleResponse(tabId, params);
+      await this.handleResponse(tabId, params);
+    } else if (method === 'Network.dataReceived') {
+      this.handleDataReceived(tabId, params);
     } else if (method === 'Network.loadingFinished') {
       await this.handleFinished(tabId, params);
     } else if (method === 'Network.loadingFailed') {
-      this.handleFailed(tabId, params);
+      await this.handleFailed(tabId, params);
     } else if (method === 'Network.webSocketCreated') {
       this.handleWebSocketCreated(tabId, params);
     } else if (method === 'Network.webSocketFrameSent') {
@@ -790,7 +813,30 @@ export class ChatGptNetworkMonitor {
     });
   }
 
-  handleResponse(tabId, params) {
+  appendResponseStreamChunk(record, encoded) {
+    if (!record || typeof encoded !== 'string' || !encoded || record.streamCaptureOverflowed) return;
+    const estimatedBytes = Math.floor((encoded.length * 3) / 4);
+    if ((record.streamCaptureBytes || 0) + estimatedBytes > RESPONSE_STREAM_CAPTURE_MAX_BYTES) {
+      record.streamCaptureOverflowed = true;
+      return;
+    }
+    if (!Array.isArray(record.streamChunks)) record.streamChunks = [];
+    record.streamChunks.push(encoded);
+    record.streamCaptureBytes = (record.streamCaptureBytes || 0) + estimatedBytes;
+  }
+
+  responseStreamBody(record) {
+    return decodeBase64Chunks(record?.streamChunks || []);
+  }
+
+  handleDataReceived(tabId, params) {
+    if (typeof params.data !== 'string' || !params.data) return;
+    const record = this.requests.get(this.key(tabId, String(params.requestId)));
+    if (!record?.streamCaptureStarted) return;
+    this.appendResponseStreamChunk(record, params.data);
+  }
+
+  async handleResponse(tabId, params) {
     const key = this.key(tabId, String(params.requestId));
     let record = this.requests.get(key);
     const mimeType = params.response?.mimeType ?? '';
@@ -818,6 +864,24 @@ export class ChatGptNetworkMonitor {
     record.mimeType = mimeType;
     record.responseHeaders = params.response?.headers ?? {};
     record.status = params.response?.status ?? null;
+    if (record.responseVerificationEnabled && !record.streamCaptureStarted) {
+      record.streamCaptureStarted = true;
+      record.streamChunks = [];
+      record.streamCaptureBytes = 0;
+      record.streamCaptureOverflowed = false;
+      record.streamCaptureError = null;
+      try {
+        const streamed = await debuggerCall(
+          'sendCommand',
+          this.target(tabId),
+          'Network.streamResourceContent',
+          { requestId: record.requestId },
+        );
+        this.appendResponseStreamChunk(record, streamed?.bufferedData ?? '');
+      } catch (error) {
+        record.streamCaptureError = safeError(error);
+      }
+    }
   }
 
   async handleFinished(tabId, params) {
@@ -839,6 +903,11 @@ export class ChatGptNetworkMonitor {
       body = decodeCdpBody(result?.body ?? '', Boolean(result?.base64Encoded));
     } catch (error) {
       bodyError = safeError(error);
+    }
+    const streamedBody = this.responseStreamBody(record);
+    if ((!body || bodyError) && streamedBody) {
+      body = streamedBody;
+      bodyError = null;
     }
 
     const handoff = this.resolveFinishedHandoff(tabId, record, body);
@@ -867,6 +936,9 @@ export class ChatGptNetworkMonitor {
       direction: 'received',
       stage: record.downstream ? 'downstream_http' : 'initial_conversation',
       streamHandoff,
+      streamCaptureBytes: record.streamCaptureBytes || 0,
+      streamCaptureOverflowed: record.streamCaptureOverflowed === true,
+      streamCaptureError: record.streamCaptureError || null,
       ...evidence.diagnostics,
     };
 
@@ -904,12 +976,74 @@ export class ChatGptNetworkMonitor {
     body = '';
   }
 
-  handleFailed(tabId, params) {
+  async handleFailed(tabId, params) {
     const key = this.key(tabId, String(params.requestId));
     const record = this.requests.get(key);
     if (!record) return;
     this.requests.delete(key);
     if (!record.responseVerificationEnabled) return;
+
+    const recoveredBody = this.responseStreamBody(record);
+    if (Boolean(params.canceled) && Number(record.status) === 200 && recoveredBody) {
+      const handoff = this.resolveFinishedHandoff(tabId, record, recoveredBody);
+      if (this.downstreamResponseMatchesHandoff(record, recoveredBody, handoff)) {
+        const evidence = extractResponseEvidence({
+          body: recoveredBody,
+          headers: record.responseHeaders,
+          mimeType: record.mimeType,
+        });
+        const streamHandoff = !record.downstream && handoff ? publicStreamHandoff(handoff) : null;
+        const streamContext = handoff
+          ? this.streamContext(handoff, {
+            isDownstream: Boolean(record.downstream),
+            transport: 'sse',
+            direction: 'received',
+            stage: record.downstream ? 'downstream_http_aborted' : 'initial_conversation_aborted',
+            matchBasis: record.matchBasis ?? (record.downstream ? 'handoff_marker' : 'formal_request'),
+          })
+          : null;
+        const diagnostics = {
+          endpoint: record.endpoint,
+          httpStatus: record.status,
+          transport: 'sse',
+          direction: 'received',
+          stage: record.downstream ? 'downstream_http_aborted' : 'initial_conversation_aborted',
+          terminalEvent: 'loadingFailed',
+          networkError: params.errorText || 'network_loading_failed',
+          streamHandoff,
+          streamCaptureBytes: record.streamCaptureBytes || 0,
+          streamCaptureOverflowed: record.streamCaptureOverflowed === true,
+          streamCaptureError: record.streamCaptureError || null,
+          ...evidence.diagnostics,
+        };
+        if (hasResponseMetadataEvidence(evidence)) {
+          this.onEvidence(tabId, {
+            requestId: record.requestId,
+            capturedAt: new Date().toISOString(),
+            status: record.status,
+            model: evidence.model,
+            defaultModel: evidence.defaultModel,
+            defaultModelField: evidence.defaultModelField,
+            reasoning: evidence.reasoning,
+            conflicts: evidence.conflicts,
+            fields: evidence.fields,
+            bodyError: null,
+            rawResponseBody: recoveredBody,
+            streamContext,
+            diagnostics,
+          });
+          return;
+        }
+        this.onStreamData?.(tabId, {
+          requestId: record.requestId,
+          capturedAt: new Date().toISOString(),
+          rawStreamData: recoveredBody,
+          diagnostics: { ...diagnostics, verificationSuppressedReason: 'aborted_partial_metadata_incomplete' },
+          streamContext,
+        });
+      }
+    }
+
     this.onFailure(tabId, {
       requestId: record.requestId,
       error: params.errorText || 'network_loading_failed',
