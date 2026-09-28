@@ -32,7 +32,7 @@ import {
 } from './tab-feature-runtime.js';
 import { ACCOUNT_REFRESH_ALARM } from './account-refresh-scheduler.js';
 
-const RUNTIME_CODE_VERSION = '0.1.43';
+const RUNTIME_CODE_VERSION = '0.1.44';
 const NATIVE_HOST = 'com.gptlock.core';
 const RECONNECT_ALARM = 'gptlock-native-reconnect';
 const REQUEST_TIMEOUT_MS = 7000;
@@ -1892,8 +1892,13 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
           item.label = String(freshRow.label || item.label || '');
         }
       }
-      let selectionResponse = await sendTabMessage(tabId, { type: 'GPTLOCK_VERIFY_ACCOUNT_MODEL', model: item.model, selectorKey: item.selectorKey, label: item.label });
-      let selection = selectionResponse?.result || {};
+      const transportOnly = item.selectorKey === '__work_transport__';
+      let selectionResponse = null;
+      let selection = { selectionAttempted: false, observation: state.pageObservation || null };
+      if (!transportOnly) {
+        selectionResponse = await sendTabMessage(tabId, { type: 'GPTLOCK_VERIFY_ACCOUNT_MODEL', model: item.model, selectorKey: item.selectorKey, label: item.label });
+        selection = selectionResponse?.result || {};
+      }
       if (selection.selectionAttempted !== true && item.pickerMode === 'B' && item.model) {
         const freshB = await reacquirePickerBForModel(tabId, item.model, progress);
         const freshRow = (freshB?.rows || []).find((row) => normalizeConcreteModelId(row?.model || row?.rawId) === item.model);
@@ -1904,7 +1909,8 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
           selection = selectionResponse?.result || {};
         }
       }
-      if (selection.selectionAttempted !== true) throw new Error('Model selection control was not activated');
+      if (!transportOnly && selection.selectionAttempted !== true) throw new Error('Model selection control was not activated');
+      if (transportOnly) logRuntime('info', 'verification', 'verification_hidden_work_transport_probe', { tabId, model: item.model });
 
       // Picker B updates ChatGPT's Work model state asynchronously. v0.1.34 proved
       // that sending in the same task can leave the native conversation body on the
@@ -2097,9 +2103,22 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
           workBootstrapTabs.delete(Number(tabId));
         }
 
-        // Do not reload/stop/recover this bootstrap turn. A failed product Work request
-        // is evidence that the transition did not happen; recovery must not become a
-        // second authority that mutates the page.
+        // The redesigned composer may keep the visible two-row Chat picker even after
+        // normal Work policy is active. Preserve the activation turn's independent
+        // response authority before DOM rediscovery.
+        const activationRewrite = state.lastRewrite;
+        const activationResponse = state.lastResponseEvidence;
+        const activationTarget = normalizeConcreteModelId(activationRewrite?.modelAfter);
+        const activationDefaultModel = normalizeConcreteModelId(activationResponse?.defaultModel);
+        const activationWorkConfirmed = Boolean(
+          activationSettled?.settled === true
+            && activationRewrite?.authorityKind === 'normal-policy'
+            && activationRewrite?.requestId
+            && activationResponse?.requestId === activationRewrite.requestId
+            && activationTarget
+            && modelTransportId(activationTarget) !== activationTarget
+            && activationDefaultModel === activationTarget
+        );
         let workCatalog = null;
         if (activationSettled?.settled === true) {
           const deadline = Date.now() + 10000;
@@ -2111,29 +2130,50 @@ async function verifyAccountCatalogModels(tabId, state, accountCatalog, { restor
           } while (Date.now() < deadline);
         }
 
-        const entered = activationSettled?.settled === true && workCatalog?.pickerMode === 'B';
-        const addedFromB = entered ? mergeCatalog(workCatalog, 'work-picker-b') : 0;
+        const pickerBEntered = activationSettled?.settled === true && workCatalog?.pickerMode === 'B';
+        let addedFromWork = pickerBEntered ? mergeCatalog(workCatalog, 'work-picker-b') : 0;
+        if (!pickerBEntered && activationWorkConfirmed) {
+          addedFromWork += mergeCatalog({
+            pickerMode: null,
+            reasoningLevels: workCatalog?.reasoningLevels || [],
+            rows: [
+              ['gpt-5.6-luna','GPT-5.6 Luna'],
+              ['gpt-5.6-terra','GPT-5.6 Terra'],
+              ['gpt-6-astra','GPT-6 Astra'],
+              ['gpt-6-luna','GPT-6 Luna'],
+              ['gpt-6-sol','GPT-6 Sol'],
+            ].map(([model,label]) => ({ model, rawId:model, label, selectorKey:'__work_transport__', pickerMode:null })),
+          }, 'work-response-hidden');
+        }
+        const entered = pickerBEntered || activationWorkConfirmed;
         progress.workDiscovery = {
           attempted: true,
           entered,
-          reason: entered ? 'normal_work_turn_picker_b_observed'
-            : activationSettled?.interrupted === true ? 'normal_work_turn_interrupted'
-              : activationSettled?.settled === true ? 'picker_b_not_observed'
-                : 'normal_work_turn_not_settled',
+          reason: pickerBEntered ? 'normal_work_turn_picker_b_observed'
+            : activationWorkConfirmed ? 'normal_work_turn_work_profile_confirmed_by_default_model'
+              : activationSettled?.interrupted === true ? 'normal_work_turn_interrupted'
+                : activationSettled?.settled === true ? 'picker_b_not_observed_and_work_response_unconfirmed'
+                  : 'normal_work_turn_not_settled',
           runtimeEnabled: true,
-          source: 'normal_work_policy_request',
+          source: activationWorkConfirmed && !pickerBEntered ? 'normal_work_response_default_model' : 'normal_work_policy_request',
           pickerMode: workCatalog?.pickerMode ?? null,
-          added: addedFromB,
+          added: addedFromWork,
+          activationTarget,
+          activationDefaultModel,
+          activationWorkConfirmed,
         };
         logRuntime(entered ? 'info' : 'warn', 'verification', 'verification_work_mode_transition', {
           tabId, phase: 'post_gpt_5_6_sol', entered,
-          source: 'normal_work_policy_request',
+          source: progress.workDiscovery.source,
           reason: progress.workDiscovery.reason,
           pickerMode: workCatalog?.pickerMode ?? null,
-          added: addedFromB,
+          added: addedFromWork,
+          activationTarget,
+          activationDefaultModel,
+          activationWorkConfirmed,
         });
         workActivationPending = false;
-        if (addedFromB) stablePasses = 0;
+        if (addedFromWork) stablePasses = 0;
         await broadcastTabState(tabId);
       } else {
         progress.workDiscovery = {
