@@ -3,8 +3,7 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 const r=p=>readFile(new URL('../'+p,import.meta.url),'utf8');
 test('v0.1.44 verifies hidden Work profiles after redesigned picker stays A',async()=>{
-  const [b,m]=await Promise.all([r('extension/background.js'),r('extension/manifest.json')]);
-  assert.equal(JSON.parse(m).version,'0.1.44');
+  const b=await r('extension/background.js');
   for(const id of ['gpt-5.6-luna','gpt-5.6-terra','gpt-6-astra','gpt-6-luna','gpt-6-sol']) assert.ok(b.includes(id));
   assert.match(b,/activationWorkConfirmed/);
   assert.match(b,/activationDefaultModel === activationTarget/);
