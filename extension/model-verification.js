@@ -96,7 +96,6 @@ export function createVerificationCatalog({
           existing.rawModel = rawModel || existing.rawModel;
           existing.selectorKey = selectorKey || existing.selectorKey;
           existing.label = label || existing.label;
-          existing.pickerMode = candidate.pickerMode || existing.pickerMode;
         }
         continue;
       }
