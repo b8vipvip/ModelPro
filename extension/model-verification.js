@@ -192,3 +192,24 @@ export function createModelVerificationHistoryRecord(
   };
   return record;
 }
+
+export function shouldRetryTransientResponse(result = {}, { maxRetries = 1 } = {}) {
+  const retryCount = Math.max(0, Number(result.retryCount || 0));
+  const httpStatus = Number(result.responseHttpStatus || 0);
+  const bodyError = String(result.responseBodyError || result.error || '');
+  return result.requestConfirmed === true
+    && result.responseConfirmed !== true
+    && retryCount < Math.max(0, Number(maxRetries || 0))
+    && httpStatus === 200
+    && /(?:net::ERR_ABORTED|network_loading_failed)/i.test(bodyError)
+    && (!result.responseModel || result.responseIssue === 'response_body_read_failed');
+}
+
+export function publishableVerificationResults(results = [], normalizeModel = (value) => value || null) {
+  return (Array.isArray(results) ? results : []).filter((item) => (
+    item?.verified === true
+      && item?.requestConfirmed === true
+      && item?.responseConfirmed === true
+      && Boolean(normalizeModel(item?.model || item?.requestModel))
+  ));
+}
