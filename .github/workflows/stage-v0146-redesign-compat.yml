@@ -1,0 +1,38 @@
+name: stage-v0146-redesign-compat
+
+on:
+  push:
+    branches:
+      - fix/v0.1.46-chatgpt-viewtrack-aborted-retry
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply v0.1.46 compatibility patch
+        run: node .github/scripts/stage-v0146-redesign-compat.cjs
+      - name: Validate ModelPro
+        run: npm test
+      - name: Commit staged source
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "Source already staged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add extension test package.json
+          git commit -m "v0.1.46: support ChatGPT ViewTrack picker and transient response retry policy"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
