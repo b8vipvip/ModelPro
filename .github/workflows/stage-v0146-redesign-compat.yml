@@ -21,7 +21,9 @@ jobs:
         with:
           node-version: 22
       - name: Apply v0.1.46 compatibility patch
-        run: node .github/scripts/stage-v0146-redesign-compat.cjs
+        run: |
+          node .github/scripts/stage-v0146-redesign-compat.cjs
+          node .github/scripts/fix-v0146-legacy-test.cjs
       - name: Validate ModelPro
         run: npm test
       - name: Commit staged source
