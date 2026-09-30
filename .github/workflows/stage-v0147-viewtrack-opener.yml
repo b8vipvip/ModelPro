@@ -1,0 +1,44 @@
+name: stage-v0147-viewtrack-opener
+
+on:
+  push:
+    branches:
+      - fix/v0.1.47-model-view-opener-after-selection
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply v0.1.47 ViewTrack opener repair
+        run: node .github/scripts/stage-v0147-viewtrack-opener.cjs
+      - name: Run ModelPro tests
+        run: npm test
+      - name: Validate version surfaces
+        shell: bash
+        run: |
+          test "$(node -p "require('./package.json').version")" = "0.1.47"
+          test "$(node -p "require('./extension/manifest.json').version")" = "0.1.47"
+          grep -q "const RUNTIME_CODE_VERSION = '0.1.47';" extension/background.js
+      - name: Commit staged source
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "Source already staged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add extension/content.js extension/background.js extension/manifest.json package.json
+          git commit -m "v0.1.47: keep ViewTrack model opener stable after selection"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
