@@ -1205,14 +1205,23 @@ document.addEventListener('pointerdown', (event) => {
 
   function redesignedModelViewOpener(picker) {
     if (!picker || !visible(picker)) return null;
+    const exactModelViewName = /^(?:select model|choose model|选择模型|選擇模型|모델 선택)$/i;
     const candidates = [...picker.querySelectorAll('[role="menuitem"],button,[role="button"]')]
       .filter((element) => interactionVisible(element))
       .filter((element) => !element.closest?.('#gptlock-indicator-host,#gptlock-verification-progress-host'))
       .filter((element) => {
-        const descriptor = rowModelDescriptor(element);
-        if (descriptor.model || descriptor.rawId) return false;
         if (element.matches?.('[role="slider"],input[type="range"]')) return false;
         if (element.querySelector?.('[role="slider"],input[type="range"]')) return false;
+        // After a real model is selected ChatGPT changes this ViewToggle's visible
+        // text from just the effort ("高") to a model+effort summary ("5.5 高").
+        // Its exact accessible name remains "选择模型 / Select model" and is the
+        // stable navigation authority. Do not misclassify that control as a model row.
+        const accessibleName = String(
+          element.getAttribute?.('aria-label') || element.getAttribute?.('title') || ''
+        ).trim();
+        if (exactModelViewName.test(accessibleName)) return true;
+        const descriptor = rowModelDescriptor(element);
+        if (descriptor.model || descriptor.rawId) return false;
         const label = normalizedPickerLabel(element).replace(/[›»>]+\s*$/, '').trim();
         return Boolean(normalizeDisplayedReasoning(label));
       });
@@ -1369,6 +1378,17 @@ document.addEventListener('pointerdown', (event) => {
           });
           return { trigger, picker, opener: null, submenu: picker, rows: redesignedDirectRows, pageContext, pickerMode: 'A' };
         }
+        // A dispatched ViewTrack navigation owns this attempt. Falling through to
+        // modelSubmenuOpener would click the same Select-model ViewToggle a second
+        // time and slide ChatGPT back to the reasoning panel. Fail closed and let
+        // the next verification attempt reopen/reacquire the composer picker.
+        pickerTopologyProbe('picker-redesign-model-view-unresolved', {
+          pageContext,
+          pickerMode: 'A',
+          opener: compactElementProbe(modelViewOpener),
+          ownedPicker: compactElementProbe(picker),
+        });
+        return { trigger, picker, opener: modelViewOpener, submenu: null, rows: [], pageContext, pickerMode: 'A' };
       }
     }
 
