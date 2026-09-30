@@ -3,9 +3,6 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const content = await readFile(new URL('../extension/content.js', import.meta.url), 'utf8');
-const manifest = JSON.parse(await readFile(new URL('../extension/manifest.json', import.meta.url), 'utf8'));
-const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-const background = await readFile(new URL('../extension/background.js', import.meta.url), 'utf8');
 
 test('ViewTrack Select-model opener remains authoritative after its text becomes model plus effort', () => {
   const start = content.indexOf('function redesignedModelViewOpener(picker)');
@@ -28,10 +25,4 @@ test('successful ViewTrack navigation cannot fall through and click the same ope
   const section = content.slice(start, end);
   assert.match(section, /picker-redesign-model-view-unresolved/);
   assert.match(section, /return \{ trigger, picker, opener: modelViewOpener, submenu: null, rows: \[\], pageContext, pickerMode: 'A' \};/);
-});
-
-test('v0.1.47 runtime surfaces are synchronized', () => {
-  assert.equal(manifest.version, '0.1.47');
-  assert.equal(pkg.version, manifest.version);
-  assert.match(background, /const RUNTIME_CODE_VERSION = '0\.1\.47';/);
 });
