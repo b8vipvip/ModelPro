@@ -1176,7 +1176,7 @@ document.addEventListener('pointerdown', (event) => {
     ].filter(Boolean).join(' ')).toLowerCase().replace(/\s+/g, ' ').trim();
   }
 
-  function defaultChatDirectModelRows(picker) {
+  function defaultChatDirectModelRows(picker, { requireInteraction = true } = {}) {
     if (!picker || !visible(picker)) return [];
     // 2026-09 ChatGPT redesign: the top-level composer menu itself now contains
     // the two Chat models (GPT-5.6 Sol + GPT-5.5) AND an accessible "选择模型"
@@ -1185,7 +1185,8 @@ document.addEventListener('pointerdown', (event) => {
     // Keep the older intelligence-picker contract isolated by requiring the exact
     // current default Chat pair and excluding the legacy composer-intelligence root.
     if (picker.matches?.('[data-testid="composer-intelligence-picker-content"]')) return [];
-    const rows = distinctModelRows(picker).filter(interactionVisible);
+    const semanticRows = distinctModelRows(picker);
+    const rows = requireInteraction ? semanticRows.filter(interactionVisible) : semanticRows;
     const models = new Set(rows.map((row) => rowModelDescriptor(row).model).filter(Boolean));
     if (models.size !== 2 || !models.has('gpt-5.5') || !models.has('gpt-5.6-sol')) return [];
     return rows.filter((row) => {
@@ -1363,7 +1364,12 @@ document.addEventListener('pointerdown', (event) => {
       const navigated = await modelPickerPointer(modelViewOpener, 'click', 'model-picker-redesign-model-view');
       if (navigated) {
         redesignedDirectRows = await waitUntil(() => {
-          const rows = defaultChatDirectModelRows(picker);
+          // The exact accessible Select-model ViewToggle just established causal ownership.
+          // ViewTrack can keep the newly selected model panel underneath a transient overlay,
+          // so the final semantic rows may temporarily fail elementFromPoint() even though
+          // they are the exact default Chat pair in this same owned picker. Final selection
+          // already uses the semantic DOM row and request/response metadata is terminal proof.
+          const rows = defaultChatDirectModelRows(picker, { requireInteraction: false });
           return rows.length === 2 ? rows : null;
         }, 2600, 80) || [];
         if (redesignedDirectRows.length === 2) {
@@ -2115,7 +2121,12 @@ document.addEventListener('pointerdown', (event) => {
     // The composer trigger can combine model + reasoning text (for example
     // "GPT-5.6 Luna 高"); normalizing that trigger can manufacture a fake "gpt-5.6"
     // entry. Never promote that combined trigger into the mode-B model catalog.
-    if (modern.pickerMode !== 'B' && current?.model && !models.some((item) => item.model === current.model)) {
+    // A unified picker transaction that found zero semantic rows must not turn
+    // the composer summary (for example "5.5 高") into a fabricated catalog entry.
+    // The current-page model can supplement legacy/no-picker discovery or a successful
+    // semantic picker result, but it cannot replace a failed owned-picker discovery.
+    const currentCanJoinCatalog = !modern.picker || modern.rows.length > 0;
+    if (modern.pickerMode !== 'B' && currentCanJoinCatalog && current?.model && !models.some((item) => item.model === current.model)) {
       models.push({ rawId: current.model, model: current.model, label: current.modelLabel || current.model });
     }
     if (current?.reasoning) reasoning.add(current.reasoning);
