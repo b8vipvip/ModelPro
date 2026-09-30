@@ -8,9 +8,15 @@ const manifest = JSON.parse(await readFile(new URL('../extension/manifest.json',
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const background = await readFile(new URL('../extension/background.js', import.meta.url), 'utf8');
 
-test('redesigned ViewTrack model rows require real hit-test ownership', () => {
+test('redesigned ViewTrack model rows are hit-test strict before causal model-view navigation', () => {
   assert.match(content, /function interactionVisible\(element\)/);
-  assert.match(content, /distinctModelRows\(picker\)\.filter\(interactionVisible\)/);
+  assert.match(content, /function defaultChatDirectModelRows\(picker, \{ requireInteraction = true \} = \{\}\)/);
+  assert.match(content, /const rows = requireInteraction \? semanticRows\.filter\(interactionVisible\) : semanticRows;/);
+  const openStart = content.indexOf('async function openModernModelMenu()');
+  const openEnd = content.indexOf('function rowModelDescriptor(row)', openStart);
+  assert.ok(openStart >= 0 && openEnd > openStart);
+  const open = content.slice(openStart, openEnd);
+  assert.match(open, /let redesignedDirectRows = defaultChatDirectModelRows\(picker\);/);
   assert.match(content, /function redesignedModelViewOpener\(picker\)/);
   assert.match(content, /model-picker-redesign-model-view/);
   assert.match(content, /picker-mode-a-redesigned-model-view/);
