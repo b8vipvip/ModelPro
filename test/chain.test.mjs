@@ -332,7 +332,7 @@ test('v0.1.40 treats redesigned default Chat pair as authoritative first-layer r
  assert.match(content,/models\.has\('gpt-5\.6-sol'\)/);
  assert.match(content,/picker-mode-a-redesigned-direct-chat-list/);
  const open=content.slice(content.indexOf('async function openModernModelMenu'),content.indexOf('function rowModelDescriptor'));
- const redesigned=open.indexOf('const redesignedDirectRows = defaultChatDirectModelRows\(picker\)');
+ const redesigned=open.search(/(?:const|let) redesignedDirectRows = defaultChatDirectModelRows\(picker\)/);
  const opener=open.indexOf('const initialOpener = modelSubmenuOpener\(picker\)');
  assert.ok(redesigned>=0 && opener>redesigned,'redesigned direct-pair authority must run before nested opener logic');
 });
