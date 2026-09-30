@@ -28,8 +28,8 @@ test('one canceled HTTP 200 response can be retried but not published unverified
   assert.deepEqual(publishableVerificationResults(results, (value) => value), [results[1]]);
 });
 
-test('v0.1.46 runtime surfaces are synchronized', () => {
-  assert.equal(manifest.version, '0.1.46');
+test('runtime surfaces stay synchronized across ModelPro releases', () => {
   assert.equal(pkg.version, manifest.version);
-  assert.match(background, /const RUNTIME_CODE_VERSION = '0\.1\.46';/);
+  const escapedVersion = manifest.version.replaceAll('.', '\\.');
+  assert.match(background, new RegExp(`const RUNTIME_CODE_VERSION = '${escapedVersion}';`));
 });
