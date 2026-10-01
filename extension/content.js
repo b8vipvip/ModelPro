@@ -486,7 +486,10 @@ document.addEventListener('pointerdown', (event) => {
   function normalizeDisplayedModel(text) {
     if (!text) return null;
     const compact = text.trim().toLowerCase().replace(/\s+/g, '-');
-    const explicit = compact.match(/gpt-?(\d+(?:\.\d+)*)(?:-([a-z0-9]+(?:-[a-z0-9]+)*))?/);
+    // ChatGPT may append lifecycle/deprecation copy to a model row (for example,
+    // "GPT-5.5 Leaving on October 14"). Only known model-family suffixes belong
+    // to the canonical model id; trailing UI copy must not become part of the id.
+    const explicit = compact.match(/gpt-?(\d+(?:\.\d+)*)(?:-(astra|sol|terra|luna|pro))?\b/);
     if (explicit) {
       const suffix = explicit[2] ? `-${explicit[2]}` : '';
       const value = `gpt-${explicit[1]}${suffix}`;
