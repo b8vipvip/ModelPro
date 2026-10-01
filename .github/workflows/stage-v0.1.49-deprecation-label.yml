@@ -41,6 +41,12 @@ jobs:
                   raise SystemExit(f'expected 0.1.48 in {path}')
               q.write_text(t.replace('0.1.48', '0.1.49'), encoding='utf-8')
 
+          legacy = Path('test/v0.1.48-causal-viewtrack-model-rows.test.mjs')
+          t = legacy.read_text(encoding='utf-8')
+          t = t.replace("test('v0.1.48 runtime surfaces are synchronized', () => {\n  assert.equal(manifest.version, '0.1.48');\n  assert.equal(pkg.version, manifest.version);\n  assert.match(background, /const RUNTIME_CODE_VERSION = '0\\.1\\.48';/);\n});",
+                        "test('runtime surfaces remain synchronized after causal ViewTrack compatibility', () => {\n  assert.equal(pkg.version, manifest.version);\n  assert.match(background, new RegExp(`const RUNTIME_CODE_VERSION = '${manifest.version.replace(/\\./g, '\\\\.')}';`));\n});")
+          legacy.write_text(t, encoding='utf-8')
+
           test = Path('test/v0.1.49-deprecation-label-model-row.test.mjs')
           test.write_text(r'''import test from 'node:test';
           import assert from 'node:assert/strict';
