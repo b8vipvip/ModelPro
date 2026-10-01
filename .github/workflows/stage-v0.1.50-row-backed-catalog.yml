@@ -39,6 +39,20 @@ jobs:
           text = text.replace(old_comment, new_comment)
           content_path.write_text(text, encoding='utf-8')
 
+          old_test_path = Path('test/v0.1.48-causal-viewtrack-model-rows.test.mjs')
+          old_test = old_test_path.read_text(encoding='utf-8')
+          old_assertion = r"assert.match(section, /const currentCanJoinCatalog = !modern\.picker \|\| modern\.rows\.length > 0;/);"
+          new_assertion = "assert.match(section, /const currentCanJoinCatalog = candidateCount > 0;/);"
+          if old_assertion not in old_test:
+              raise SystemExit('v0.1.48 fallback invariant assertion was not found')
+          old_test = old_test.replace(old_assertion, new_assertion, 1)
+          old_test = old_test.replace(
+              "test('failed unified-picker discovery cannot fabricate a catalog entry from the composer summary', () => {",
+              "test('failed or absent picker discovery cannot fabricate a catalog entry from the composer summary', () => {",
+              1,
+          )
+          old_test_path.write_text(old_test, encoding='utf-8')
+
           package_path = Path('package.json')
           package = package_path.read_text(encoding='utf-8')
           if '"version":"0.1.49"' not in package:
@@ -58,7 +72,7 @@ jobs:
           background_path.write_text(background.replace("const RUNTIME_CODE_VERSION = '0.1.49';", "const RUNTIME_CODE_VERSION = '0.1.50';", 1), encoding='utf-8')
 
           test_path = Path('test/v0.1.50-row-backed-catalog-fallback.test.mjs')
-          test_path.write_text(dedent(r'''\
+          test_path.write_text(dedent(r'''
           import test from 'node:test';
           import assert from 'node:assert/strict';
           import fs from 'node:fs';
@@ -85,7 +99,7 @@ jobs:
             assert.equal(pkg.version, manifest.version);
             assert.match(background, /const RUNTIME_CODE_VERSION = '0\.1\.50';/);
           });
-          '''), encoding='utf-8')
+          ''').lstrip(), encoding='utf-8')
       - name: Test staged ModelPro
         run: npm test
       - name: Commit staged release
@@ -93,6 +107,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm .github/workflows/stage-v0.1.50-row-backed-catalog.yml
-          git add extension/content.js extension/background.js extension/manifest.json package.json test/v0.1.50-row-backed-catalog-fallback.test.mjs
+          git add extension/content.js extension/background.js extension/manifest.json package.json test/v0.1.48-causal-viewtrack-model-rows.test.mjs test/v0.1.50-row-backed-catalog-fallback.test.mjs
           git commit -m "v0.1.50: require row-backed catalog discovery [stage-done]"
           git push origin HEAD:fix/v0.1.50-row-backed-catalog
