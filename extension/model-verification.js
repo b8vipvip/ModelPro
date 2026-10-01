@@ -197,12 +197,21 @@ export function shouldRetryTransientResponse(result = {}, { maxRetries = 1 } = {
   const retryCount = Math.max(0, Number(result.retryCount || 0));
   const httpStatus = Number(result.responseHttpStatus || 0);
   const bodyError = String(result.responseBodyError || result.error || '');
-  return result.requestConfirmed === true
+  const responseIssue = String(result.responseIssue || '');
+  const commonRetryGate = result.requestConfirmed === true
     && result.responseConfirmed !== true
     && retryCount < Math.max(0, Number(maxRetries || 0))
-    && httpStatus === 200
-    && /(?:net::ERR_ABORTED|network_loading_failed)/i.test(bodyError)
-    && (!result.responseModel || result.responseIssue === 'response_body_read_failed');
+    && httpStatus === 200;
+  if (!commonRetryGate) return false;
+
+  // A model-bearing HTTP 200 response can transiently expose mutually inconsistent
+  // served/default routing metadata while the backend handoff settles. Never accept
+  // either candidate, but allow one bounded replay before making the whole catalog
+  // partial when the next identical request may provide one unambiguous identity.
+  if (responseIssue === 'response_metadata_conflict' && !result.responseModel) return true;
+
+  return /(?:net::ERR_ABORTED|network_loading_failed)/i.test(bodyError)
+    && (!result.responseModel || responseIssue === 'response_body_read_failed');
 }
 
 export function publishableVerificationResults(results = [], normalizeModel = (value) => value || null) {
