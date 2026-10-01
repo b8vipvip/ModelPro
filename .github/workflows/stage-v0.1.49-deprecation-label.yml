@@ -1,0 +1,75 @@
+name: Stage v0.1.49 deprecation-label compatibility
+on:
+  push:
+    branches:
+      - fix/v0.1.49-deprecation-label-model-row
+permissions:
+  contents: write
+jobs:
+  stage:
+    if: ${{ !contains(github.event.head_commit.message, '[stage-done]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Patch parser, add regression coverage, bump version
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('extension/content.js')
+          s = p.read_text(encoding='utf-8')
+          old = "    const explicit = compact.match(/gpt-?(\\d+(?:\\.\\d+)*)(?:-([a-z0-9]+(?:-[a-z0-9]+)*))?/);"
+          new = "    // ChatGPT may append lifecycle/deprecation copy to a model row (for example,\\n    // \\"GPT-5.5 Leaving on October 14\\"). Only known model-family suffixes belong\\n    // to the canonical model id; trailing UI copy must not become part of the id.\\n    const explicit = compact.match(/gpt-?(\\d+(?:\\.\\d+)*)(?:-(astra|sol|terra|luna|pro))?\\b/);"
+          if old not in s:
+              raise SystemExit('normalizeDisplayedModel target not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+
+          for path in ['package.json', 'extension/manifest.json', 'extension/background.js']:
+              q = Path(path)
+              t = q.read_text(encoding='utf-8')
+              if '0.1.48' not in t:
+                  raise SystemExit(f'expected 0.1.48 in {path}')
+              q.write_text(t.replace('0.1.48', '0.1.49'), encoding='utf-8')
+
+          test = Path('test/v0.1.49-deprecation-label-model-row.test.mjs')
+          test.write_text(r'''import test from 'node:test';
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+
+          const source = readFileSync(new URL('../extension/content.js', import.meta.url), 'utf8');
+          const start = source.indexOf('function normalizeDisplayedModel(text)');
+          const end = source.indexOf('\n  function ', start + 1);
+          assert.ok(start >= 0 && end > start, 'normalizeDisplayedModel must remain extractable');
+          const fnSource = source.slice(start, end);
+          const normalizeDisplayedModel = Function(`${fnSource}; return normalizeDisplayedModel;`)();
+
+          test('deprecation copy after a bare model name is not absorbed into the model id', () => {
+            assert.equal(normalizeDisplayedModel('GPT-5.5 Leaving on October 14'), 'gpt-5.5');
+            assert.equal(normalizeDisplayedModel('GPT-5.5'), 'gpt-5.5');
+          });
+
+          test('known model-family suffixes remain canonical', () => {
+            assert.equal(normalizeDisplayedModel('GPT-5.6 Sol'), 'gpt-5.6-sol');
+            assert.equal(normalizeDisplayedModel('GPT-6 Astra'), 'gpt-6-astra');
+          });
+          ''', encoding='utf-8')
+
+          Path('.github/workflows/stage-v0.1.49-deprecation-label.yml').unlink()
+          PY
+      - name: Run ModelPro tests
+        run: npm test
+      - name: Commit staged patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "v0.1.49: preserve model identity across deprecation labels [stage-done]"
+          git push origin HEAD:fix/v0.1.49-deprecation-label-model-row
