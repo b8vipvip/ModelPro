@@ -45,8 +45,7 @@ test('failed unified-picker discovery cannot fabricate a catalog entry from the 
   );
 });
 
-test('v0.1.48 runtime surfaces are synchronized', () => {
-  assert.equal(manifest.version, '0.1.48');
+test('runtime surfaces remain synchronized after causal ViewTrack compatibility', () => {
   assert.equal(pkg.version, manifest.version);
-  assert.match(background, /const RUNTIME_CODE_VERSION = '0\.1\.48';/);
+  assert.match(background, new RegExp(`const RUNTIME_CODE_VERSION = '${manifest.version.replace(/\./g, '\\.')}';`));
 });
