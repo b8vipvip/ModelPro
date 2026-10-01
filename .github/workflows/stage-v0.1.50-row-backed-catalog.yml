@@ -23,6 +23,7 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          from textwrap import dedent
 
           content_path = Path('extension/content.js')
           text = content_path.read_text(encoding='utf-8')
@@ -57,7 +58,8 @@ jobs:
           background_path.write_text(background.replace("const RUNTIME_CODE_VERSION = '0.1.49';", "const RUNTIME_CODE_VERSION = '0.1.50';", 1), encoding='utf-8')
 
           test_path = Path('test/v0.1.50-row-backed-catalog-fallback.test.mjs')
-          test_path.write_text("""import test from 'node:test';
+          test_path.write_text(dedent(r'''\
+          import test from 'node:test';
           import assert from 'node:assert/strict';
           import fs from 'node:fs';
 
@@ -68,22 +70,22 @@ jobs:
 
           test('account catalog fallback requires at least one discovered semantic model row', () => {
             assert.match(content, /const currentCanJoinCatalog = candidateCount > 0;/);
-            assert.doesNotMatch(content, /const currentCanJoinCatalog = !modern\\.picker \\|\\| modern\\.rows\\.length > 0;/);
+            assert.doesNotMatch(content, /const currentCanJoinCatalog = !modern\.picker \|\| modern\.rows\.length > 0;/);
             assert.match(content, /Without at least one owned semantic model row there is no selectable account catalog/);
           });
 
           test('row-backed fallback still supplements a successful picker discovery', () => {
-            assert.match(content, /candidateCount = modern\\.rows\\.length;[\\s\\S]*for \\(const row of modern\\.rows\\) rememberRow\\(row\\);/);
-            assert.match(content, /candidateCount = rows\\.length;[\\s\\S]*for \\(const row of rows\\)/);
-            assert.match(content, /currentCanJoinCatalog && current\\?\\.model/);
+            assert.match(content, /candidateCount = modern\.rows\.length;[\s\S]*for \(const row of modern\.rows\) rememberRow\(row\);/);
+            assert.match(content, /candidateCount = rows\.length;[\s\S]*for \(const row of rows\)/);
+            assert.match(content, /currentCanJoinCatalog && current\?\.model/);
           });
 
           test('v0.1.50 runtime surfaces stay synchronized', () => {
             assert.equal(manifest.version, '0.1.50');
             assert.equal(pkg.version, manifest.version);
-            assert.match(background, /const RUNTIME_CODE_VERSION = '0\\.1\\.50';/);
+            assert.match(background, /const RUNTIME_CODE_VERSION = '0\.1\.50';/);
           });
-          """.replace(/^          /gm, ''), encoding='utf-8')
+          '''), encoding='utf-8')
       - name: Test staged ModelPro
         run: npm test
       - name: Commit staged release
