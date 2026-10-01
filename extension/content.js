@@ -2126,9 +2126,10 @@ document.addEventListener('pointerdown', (event) => {
     // entry. Never promote that combined trigger into the mode-B model catalog.
     // A unified picker transaction that found zero semantic rows must not turn
     // the composer summary (for example "5.5 高") into a fabricated catalog entry.
-    // The current-page model can supplement legacy/no-picker discovery or a successful
-    // semantic picker result, but it cannot replace a failed owned-picker discovery.
-    const currentCanJoinCatalog = !modern.picker || modern.rows.length > 0;
+    // The current-page model can supplement only a successful row-backed discovery.
+    // Without at least one owned semantic model row there is no selectable account catalog,
+    // so it cannot replace either an absent trigger or a failed picker transaction.
+    const currentCanJoinCatalog = candidateCount > 0;
     if (modern.pickerMode !== 'B' && currentCanJoinCatalog && current?.model && !models.some((item) => item.model === current.model)) {
       models.push({ rawId: current.model, model: current.model, label: current.modelLabel || current.model });
     }

@@ -31,12 +31,12 @@ test('default Chat rows stay hit-test strict until the exact ViewTrack navigatio
   );
 });
 
-test('failed unified-picker discovery cannot fabricate a catalog entry from the composer summary', () => {
+test('failed or absent picker discovery cannot fabricate a catalog entry from the composer summary', () => {
   const start = content.indexOf('async function discoverAccountModelMetadata()');
   const end = content.indexOf('function diagnosticPerformanceSnapshot', start);
   assert.ok(start >= 0 && end > start);
   const section = content.slice(start, end);
-  assert.match(section, /const currentCanJoinCatalog = !modern\.picker \|\| modern\.rows\.length > 0;/);
+  assert.match(section, /const currentCanJoinCatalog = candidateCount > 0;/);
   assert.match(section, /modern\.pickerMode !== 'B' && currentCanJoinCatalog && current\?\.model/);
   assert.doesNotMatch(
     section,
